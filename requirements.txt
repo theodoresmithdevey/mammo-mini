@@ -1,0 +1,21 @@
+# ─── Core frameworks ────────────────────────────────────────────────
+tensorflow==2.16.1          # Colab's default (CUDA 12.x)
+keras==3.1.1                # Separate pip package used by TF ≥2.15
+numpy==1.26.4               # Colab + upstream pin for TF 2.16.x
+pandas==2.2.2
+
+# ─── ML / metrics ───────────────────────────────────────────────────
+scikit-learn==1.5.0         # ROC, confusion matrix, etc.
+
+# ─── Plotting & visualisation ───────────────────────────────────────
+matplotlib==3.9.0
+seaborn==0.13.2             # optional but nice for confusion-matrix heatmaps
+
+# ─── Utilities ──────────────────────────────────────────────────────
+tqdm==4.66.4                # progress bars
+h5py==3.11.0                # required by model.save('model.h5')
+pillow==10.3.0              # image decoding (PNG/JPEG) in dataloader
+opencv-python-headless==4.10.0.82  # only if you need cv2 for misc ops
+
+# ─── Optional: experiment tracking ──────────────────────────────────
+# wandb==0.17.0             # uncomment if you enable Weights & Biases logging

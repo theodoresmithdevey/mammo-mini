@@ -1,0 +1,146 @@
+# src/dataloaders.py
+"""
+CBIS-DDSM loader with on-the-fly Kaggle download and dataframe creation.
+
+cfg keys required:
+    dataset        : 'cbis_ddsm'  (only option for now)
+    view           : 'ROI' or 'FF'
+    data_root      : where to unzip images  (e.g. /content/cbis_ddsm/jpeg)
+    input_size     : 224 or 512
+    batch_size
+    csv_path       : optional cache; if absent we regenerate each run
+
+The code mirrors the Colab notebook logic exactly.
+"""
+
+import os, subprocess, zipfile, random, pathlib, pandas as pd, tensorflow as tf
+from sklearn.model_selection import train_test_split
+
+KAGGLE_SLUG = "awsaf49/cbis-ddsm-breast-cancer-image-dataset"
+ZIP_NAME    = "cbis-ddsm-breast-cancer-image-dataset.zip"
+
+IMG_SIZE = {224: (224, 224), 512: (512, 512)}
+
+_AUG = tf.keras.Sequential(
+    [
+        tf.keras.layers.RandomFlip("horizontal"),
+        tf.keras.layers.RandomRotation(0.02),
+        tf.keras.layers.RandomZoom(0.15),
+    ],
+    name="augment",
+)
+
+# --------------------------------------------------------------------- #
+# 1. Download + unzip                                                   #
+# --------------------------------------------------------------------- #
+def _download_and_unzip(dest: pathlib.Path):
+    if (dest/"jpeg").exists():
+        return
+    dest.mkdir(parents=True, exist_ok=True)
+    print("[dataloaders] Downloading CBIS-DDSM from Kaggle …")
+    subprocess.run(
+        ["kaggle", "datasets", "download", "-d", KAGGLE_SLUG, "-p", str(dest)],
+        check=True,
+    )
+    print("[dataloaders] Unzipping …")
+    zipfile.ZipFile(dest/ZIP_NAME).extractall(dest)
+    (dest/ZIP_NAME).unlink()                    # remove zip to save space
+
+# --------------------------------------------------------------------- #
+# 2. Build dataframe (ROI or full-frame)                                #
+# --------------------------------------------------------------------- #
+def _make_dataframe(root: pathlib.Path, view: str):
+    img_dir   = root/"jpeg"
+    csv_dir   = root/"csv"
+    dicom_csv = csv_dir/"dicom_info.csv"
+    mass_csv  = csv_dir/"mass_case_description_train_set.csv"
+    calc_csv  = csv_dir/"calc_case_description_train_set.csv"
+
+    dicom_df = pd.read_csv(dicom_csv)
+
+    if view.lower() == "roi":
+        roi_df = dicom_df[dicom_df['SeriesDescription'] == 'cropped images'].copy()
+    else:  # full frame
+        roi_df = dicom_df[dicom_df['SeriesDescription'] != 'cropped images'].copy()
+
+    roi_df['uid'] = roi_df['image_path'].apply(lambda x: x.split('/')[-2])
+
+    mass_df = pd.read_csv(mass_csv)[['cropped image file path', 'pathology']].copy()
+    calc_df = pd.read_csv(calc_csv)[['cropped image file path', 'pathology']].copy()
+
+    mass_df['uid'] = mass_df['cropped image file path'].apply(lambda x: x.split('/')[-2])
+    calc_df['uid'] = calc_df['cropped image file path'].apply(lambda x: x.split('/')[-2])
+    mass_df['label'] = (mass_df['pathology'] == 'MALIGNANT').astype(int)
+    calc_df['label'] = (calc_df['pathology'] == 'MALIGNANT').astype(int)
+
+    case_df = pd.concat([mass_df[['uid', 'label']], calc_df[['uid', 'label']]], ignore_index=True)
+    merged  = pd.merge(case_df, roi_df, on='uid')
+    merged['image_path'] = merged['image_path'].str.replace(
+        'CBIS-DDSM/jpeg', str(img_dir), regex=False)
+    merged = merged[['image_path', 'label']].rename(columns={'image_path': 'filepath'})
+    merged['label_str'] = merged['label'].map({0: 'benign', 1: 'malignant'})
+
+    # stratified split 70/15/15
+    train_df, temp_df = train_test_split(
+        merged, test_size=0.30, stratify=merged['label_str'], random_state=42)
+    val_df, test_df = train_test_split(
+        temp_df, test_size=0.50, stratify=temp_df['label_str'], random_state=42)
+
+    train_df['split'] = 'train'
+    val_df['split']   = 'val'
+    test_df['split']  = 'test'
+
+    df = pd.concat([train_df, val_df, test_df]).reset_index(drop=True)
+    return df.drop(columns=['label_str'])
+
+# --------------------------------------------------------------------- #
+# 3. tf.data builder                                                    #
+# --------------------------------------------------------------------- #
+def _build_tfds(df, img_size, batch, is_train):
+    paths  = df['filepath'].values
+    labels = df['label'].values
+
+    ds_paths  = tf.data.Dataset.from_tensor_slices(paths)
+    ds_labels = tf.data.Dataset.from_tensor_slices(labels)
+
+    def _load(path, y):
+        img = tf.io.read_file(path)
+        img = tf.image.decode_png(img, channels=3)
+        img = tf.image.resize(img, IMG_SIZE[img_size])
+        img = tf.cast(img, tf.float32) / 255.0
+        return img, tf.expand_dims(y, -1)
+
+    ds = tf.data.Dataset.zip((ds_paths, ds_labels))
+    ds = ds.map(_load, num_parallel_calls=tf.data.AUTOTUNE)
+    if is_train:
+        ds = ds.map(lambda x, y: (_AUG(x), y), num_parallel_calls=tf.data.AUTOTUNE)
+        ds = ds.shuffle(1024, seed=123)
+    return ds.batch(batch).prefetch(tf.data.AUTOTUNE)
+
+# --------------------------------------------------------------------- #
+# 4. Public API                                                         #
+# --------------------------------------------------------------------- #
+def get_loaders(cfg):
+    """Return train_ds, val_ds according to cfg."""
+    if cfg['dataset'].lower() != 'cbis_ddsm':
+        raise ValueError("Only cbis_ddsm supported for now.")
+
+    root = pathlib.Path(cfg['data_root'])
+    _download_and_unzip(root)
+
+    # dataframe cache
+    csv_path = cfg.get('csv_path')
+    if csv_path and pathlib.Path(csv_path).exists():
+        df = pd.read_csv(csv_path)
+    else:
+        df = _make_dataframe(root, cfg['view'])
+        if csv_path:
+            pathlib.Path(csv_path).parent.mkdir(parents=True, exist_ok=True)
+            df.to_csv(csv_path, index=False)
+
+    img_size  = cfg.get('input_size', 224)
+    batch     = cfg.get('batch_size', 16)
+
+    train_ds = _build_tfds(df[df.split == 'train'], img_size, batch, is_train=True)
+    val_ds   = _build_tfds(df[df.split == 'val'],   img_size, batch, is_train=False)
+    return train_ds, val_ds

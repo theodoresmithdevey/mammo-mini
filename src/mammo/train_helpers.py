@@ -11,6 +11,7 @@ Public:
     train_once(cfg: dict, outdir: str|Path) -> metrics dict
 """
 
+from tensorflow.keras import layers, models, optimizers, applications, regularizers
 import pathlib, json, numpy as np, tensorflow as tf, sklearn.metrics as skm
 from .dataloaders import get_loaders
 from .utils import set_seed, save_json
@@ -20,36 +21,47 @@ from .utils import set_seed, save_json
 # ───────────────────────────────────────────────────────────────────── #
 
 def build_model(cfg):
-    arch      = cfg["model"].lower()
-    img_size  = cfg["input_size"]
-    in_shape  = (img_size, img_size, 3)
-    weights   = "imagenet" if cfg["weights"]=="imagenet" else None
-    freeze_bn = cfg.get("freeze_blocks", 0)
+    
+    img_size = cfg["input_size"]
+    arch     = cfg["model"]
+    weights  = None if cfg["weights"] == "random" else "imagenet"
 
     if arch == "vgg16":
-        base = tf.keras.applications.VGG16(include_top=False,
-                                           weights=weights,
-                                           input_shape=in_shape,
-                                           pooling="avg")
+        base = applications.VGG16(include_top=False, weights=weights, input_shape=(img_size, img_size, 3))
     elif arch == "inceptionv3":
-        base = tf.keras.applications.InceptionV3(include_top=False,
-                                                 weights=weights,
-                                                 input_shape=in_shape,
-                                                 pooling="avg")
+        base = applications.InceptionV3(include_top=False, weights=weights, input_shape=(img_size, img_size, 3))
     else:
-        raise ValueError("arch must be vgg16 or inceptionv3")
+        raise ValueError(f"Unsupported model: {arch}")
 
-    # optional fine-tuning depth
-    if freeze_bn > 0:
-        for layer in base.layers[:-freeze_bn]:
-            layer.trainable = False
+    # 🔒 Apply conditional freezing logic
+    if cfg.get("freeze_scheme") == "chougrad" and cfg["weights"] == "imagenet":
+        if arch == "vgg16":
+            freeze_until(base, "block4_conv1")  # unfreezes last two conv blocks
+        else:
+            freeze_until(base, "mixed9")        # unfreezes final inception modules
 
-    x   = tf.keras.layers.Dropout(0.5)(base.output)
-    out = tf.keras.layers.Dense(1, activation="sigmoid")(x)
-    return tf.keras.Model(base.input, out)
+    # 🧠 Classification head (updated)
+    x = layers.GlobalAveragePooling2D()(base.output)
+    x = layers.BatchNormalization()(x)
+    x = layers.Dropout(0.2)(x)
+    x = layers.Dense(256, activation='relu')(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.Dropout(0.2)(x)
+    out = layers.Dense(1, activation='sigmoid')(x)
+
+
+    model = models.Model(base.input, out)
+
+    # 🛠 Optimizer + LR
+    lr = 1e-3 if cfg["optimiser"].lower() == "adam" else 1e-2
+    opt = optimizers.Adam(learning_rate=lr) if cfg["optimiser"].lower() == "adam" else optimizers.SGD(learning_rate=lr, momentum=0.9)
+
+    model.compile(optimizer=opt, loss="binary_crossentropy", metrics=["acc", "AUC"])
+    return model
+
 
 def compile_model(model, cfg):
-    lr = cfg.get("lr", 1e-4)
+    lr = 1e-3 if cfg["optimiser"]=="Adam" else 1e-2
     if cfg["optimiser"].lower() == "adam":
         opt = tf.keras.optimizers.Adam(lr)
     else:
@@ -128,13 +140,19 @@ def train_once(cfg, outdir):
     model = compile_model(build_model(cfg), cfg)
 
     cb = [
-        tf.keras.callbacks.EarlyStopping(
-            monitor="val_auc", mode="max", patience=3,
-            restore_best_weights=True),
-        tf.keras.callbacks.ModelCheckpoint(
-            outdir/"best.h5", monitor="val_auc",
-            mode="max", save_best_only=True, verbose=0),
-    ]
+    tf.keras.callbacks.EarlyStopping(
+        monitor="val_auc", mode="max", patience=3,
+        restore_best_weights=True, verbose=1),
+    
+    tf.keras.callbacks.ModelCheckpoint(
+        filepath=outdir / "best.h5", monitor="val_auc",
+        mode="max", save_best_only=True, verbose=1),
+    
+    tf.keras.callbacks.ReduceLROnPlateau(
+        monitor="val_loss", factor=0.2, patience=2,
+        min_lr=1e-6, verbose=1),
+]
+
 
     hist = model.fit(
         train_ds,
@@ -156,3 +174,6 @@ def train_once(cfg, outdir):
     model.save(outdir/"model.h5")
 
     return metrics
+
+
+

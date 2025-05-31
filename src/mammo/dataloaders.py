@@ -21,14 +21,13 @@ ZIP_NAME    = "cbis-ddsm-breast-cancer-image-dataset.zip"
 
 IMG_SIZE = {224: (224, 224), 512: (512, 512)}
 
-_AUG = tf.keras.Sequential(
-    [
-        tf.keras.layers.RandomFlip("horizontal"),
-        tf.keras.layers.RandomRotation(0.02),
-        tf.keras.layers.RandomZoom(0.15),
-    ],
-    name="augment",
-)
+_AUG = tf.keras.Sequential([
+    tf.keras.layers.RandomFlip("horizontal"),
+    tf.keras.layers.RandomRotation(0.055),
+    tf.keras.layers.RandomTranslation(0.1,0.1),
+    tf.keras.layers.RandomZoom(0.2),
+    tf.keras.layers.RandomShear(0.2),
+], name="augment")
 
 # --------------------------------------------------------------------- #
 # 1. Download + unzip                                                   #
@@ -107,7 +106,7 @@ def _build_tfds(df, img_size, batch, is_train):
         img = tf.io.read_file(path)
         img = tf.image.decode_png(img, channels=3)
         img = tf.image.resize(img, IMG_SIZE[img_size])
-        img = tf.cast(img, tf.float32) / 255.0
+        img = tf.keras.applications.inception_v3.preprocess_input(img)
         return img, tf.expand_dims(y, -1)
 
     ds = tf.data.Dataset.zip((ds_paths, ds_labels))

@@ -15,6 +15,9 @@ The code mirrors the Colab notebook logic exactly.
 
 import os, subprocess, zipfile, random, pathlib, pandas as pd, tensorflow as tf
 from sklearn.model_selection import train_test_split
+from tensorflow.keras.applications.vgg16 import preprocess_input as preprocess_vgg
+from tensorflow.keras.applications.inception_v3 import preprocess_input as preprocess_inception
+
 
 KAGGLE_SLUG = "awsaf49/cbis-ddsm-breast-cancer-image-dataset"
 ZIP_NAME    = "cbis-ddsm-breast-cancer-image-dataset.zip"
@@ -95,7 +98,7 @@ def _make_dataframe(root: pathlib.Path, view: str):
 # --------------------------------------------------------------------- #
 # 3. tf.data builder                                                    #
 # --------------------------------------------------------------------- #
-def _build_tfds(df, img_size, batch, is_train):
+def _build_tfds(df, img_size, batch, is_train, preprocess_fn):
     paths  = df['filepath'].values
     labels = df['label'].values
 
@@ -106,7 +109,7 @@ def _build_tfds(df, img_size, batch, is_train):
         img = tf.io.read_file(path)
         img = tf.image.decode_png(img, channels=3)
         img = tf.image.resize(img, IMG_SIZE[img_size])
-        img = tf.keras.applications.inception_v3.preprocess_input(img)
+        img = preprocess_fn(img)
         return img, tf.expand_dims(y, -1)
 
     ds = tf.data.Dataset.zip((ds_paths, ds_labels))
@@ -115,6 +118,7 @@ def _build_tfds(df, img_size, batch, is_train):
         ds = ds.map(lambda x, y: (_AUG(x), y), num_parallel_calls=tf.data.AUTOTUNE)
         ds = ds.shuffle(1024, seed=123)
     return ds.batch(batch).prefetch(tf.data.AUTOTUNE)
+
 
 # --------------------------------------------------------------------- #
 # 4. Public API                                                         #
@@ -140,6 +144,15 @@ def get_loaders(cfg):
     img_size  = cfg.get('input_size', 224)
     batch     = cfg.get('batch_size', 16)
 
-    train_ds = _build_tfds(df[df.split == 'train'], img_size, batch, is_train=True)
-    val_ds   = _build_tfds(df[df.split == 'val'],   img_size, batch, is_train=False)
+    # choose preprocessing function based on model
+    if cfg["model"].lower() == "vgg16":
+        preprocess_fn = preprocess_vgg
+    elif cfg["model"].lower() == "inceptionv3":
+        preprocess_fn = preprocess_inception
+    else:
+        raise ValueError("Unknown model architecture")
+
+    train_ds = _build_tfds(df[df.split == 'train'], img_size, batch, is_train=True,  preprocess_fn=preprocess_fn)
+    val_ds   = _build_tfds(df[df.split == 'val'],   img_size, batch, is_train=False, preprocess_fn=preprocess_fn)
     return train_ds, val_ds
+

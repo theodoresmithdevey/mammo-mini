@@ -79,31 +79,37 @@ def compile_model(model, cfg):
 #  Optional test-time augmentation (horizontal flip)                   #
 # ───────────────────────────────────────────────────────────────────── #
 
-def _tta_predict(model, batch, tta_passes=10):
-    preds = []
+def _tta_predict(model, batch_x, tta_passes=10):
+    """Run TTA over a batch of images, return averaged predictions."""
+    preds = np.zeros((batch_x.shape[0], 1))  # assume binary classification
     for _ in range(tta_passes):
-        augmented = AUG_LAYER(batch, training=True)
-        p = model.predict(augmented, verbose=0)
-        preds.append(p)
-    return np.mean(preds, axis=0)
+        preds += model.predict(batch_x, verbose=0)
+    preds /= tta_passes
+    return preds
 
 def evaluate(model, val_ds, tta=False, tta_passes=10):
+    import numpy as np
+    import sklearn.metrics as skm
+
     y_true, y_pred = [], []
-    for x, y in val_ds:
-        y_true.extend(y.numpy().ravel())
+    for batch_x, batch_y in val_ds:
+        y_true.extend(batch_y.numpy().ravel())
+
         if tta:
-            y_pred.extend(_tta_predict(model, x, tta_passes).ravel())
+            batch_preds = _tta_predict(model, batch_x, tta_passes)
         else:
-            y_pred.extend(model.predict(x, verbose=0).ravel())
+            batch_preds = model.predict(batch_x, verbose=0)
+
+        y_pred.extend(batch_preds.ravel())
 
     y_true = np.array(y_true)
     y_pred = np.array(y_pred)
 
-    # Optional: threshold sweep here
     auc = skm.roc_auc_score(y_true, y_pred)
-    acc = skm.accuracy_score(y_true, np.round(y_pred))  # default threshold=0.5
+    acc = skm.accuracy_score(y_true, np.round(y_pred))  # threshold 0.5
     return dict(val_auc=float(auc), val_acc=float(acc),
                 y_true=y_true.tolist(), y_pred=y_pred.tolist())
+
 
 # ------------------------------------------------------------------
 #  Freeze strategy helpers

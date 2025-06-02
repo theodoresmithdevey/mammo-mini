@@ -80,16 +80,15 @@ def compile_model(model, cfg):
 # ───────────────────────────────────────────────────────────────────── #
 
 def _tta_predict(model, batch_x, tta_passes=10):
-    """Apply random augmentations at test time and average predictions."""
     preds = np.zeros((batch_x.shape[0], 1))
 
     for _ in range(tta_passes):
-        augmented = AUG_LAYER(batch_x, training=True)  # ✅ key: training=True enables randomness
-        p = model.predict(augmented, verbose=0)
+        augmented = _AUG(batch_x, training=True)  # apply random transform
+        p = model.predict_on_batch(augmented)  # handles batch dims better
         preds += p
 
-    preds /= tta_passes
-    return preds
+    return preds / tta_passes
+
 
 def evaluate(model, val_ds, tta=False, tta_passes=10):
     import numpy as np

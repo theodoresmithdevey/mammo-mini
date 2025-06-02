@@ -165,7 +165,6 @@ def train_once(cfg, outdir):
         monitor="val_auc",
         mode="max",
         save_best_only=True,
-        save_format="tf",                #  <-- explicit      ,
         verbose=0),
     
     tf.keras.callbacks.ReduceLROnPlateau(

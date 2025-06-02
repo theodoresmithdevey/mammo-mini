@@ -156,3 +156,6 @@ def get_loaders(cfg):
     val_ds   = _build_tfds(df[df.split == 'val'],   img_size, batch, is_train=False, preprocess_fn=preprocess_fn)
     return train_ds, val_ds
 
+# Export the augmentation layer
+AUG_LAYER = _AUG
+

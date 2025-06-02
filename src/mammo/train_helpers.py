@@ -13,7 +13,7 @@ Public:
 
 from tensorflow.keras import layers, models, optimizers, applications, regularizers
 import pathlib, json, numpy as np, tensorflow as tf, sklearn.metrics as skm
-from .dataloaders import get_loaders
+from .dataloaders import get_loaders, AUG_LAYER
 from .utils import set_seed, save_json
 
 # ───────────────────────────────────────────────────────────────────── #
@@ -82,7 +82,7 @@ def compile_model(model, cfg):
 def _tta_predict(model, batch, tta_passes=10):
     preds = []
     for _ in range(tta_passes):
-        augmented = _AUG(batch, training=True)
+        augmented = AUG_LAYER(batch, training=True)
         p = model.predict(augmented, verbose=0)
         preds.append(p)
     return np.mean(preds, axis=0)

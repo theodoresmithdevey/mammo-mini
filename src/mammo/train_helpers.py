@@ -43,10 +43,10 @@ def build_model(cfg):
     # 🧠 Classification head (updated)
     x = layers.GlobalAveragePooling2D()(base.output)
     x = layers.BatchNormalization()(x)
-    x = layers.Dropout(0.2)(x)
+    x = layers.Dropout(0.3)(x)
     x = layers.Dense(256, activation='relu')(x)
     x = layers.BatchNormalization()(x)
-    x = layers.Dropout(0.2)(x)
+    x = layers.Dropout(0.3)(x)
     out = layers.Dense(1, activation='sigmoid')(x)
 
 

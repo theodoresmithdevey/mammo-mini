@@ -151,8 +151,11 @@ def train_once(cfg, outdir):
         restore_best_weights=True, verbose=1),
     
     tf.keras.callbacks.ModelCheckpoint(
-        filepath=outdir / "best.h5", monitor="val_auc",
-        mode="max", save_best_only=True, verbose=1),
+        filepath=outdir/"best.keras",
+        monitor="val_auc",
+        mode="max",
+        save_best_only=True,
+        verbose=0),
     
     tf.keras.callbacks.ReduceLROnPlateau(
         monitor="val_loss", factor=0.5, patience=4,
@@ -177,7 +180,7 @@ def train_once(cfg, outdir):
     outdir.mkdir(parents=True, exist_ok=True)
     save_json(cfg,   outdir/"config.json")
     save_json(metrics, outdir/"metrics.json")
-    model.save(outdir/"model.h5")
+    model.save(outdir/"model.keras")
 
     return metrics
 

@@ -80,12 +80,13 @@ def compile_model(model, cfg):
 # ───────────────────────────────────────────────────────────────────── #
 
 def _tta_predict(model, batch_x, tta_passes=10):
-    preds = np.zeros((batch_x.shape[0], 1))
+    """Average predictions over N stochastic Augment passes."""
+    preds = np.zeros((batch_x.shape[0], 1), dtype=float)
 
     for _ in range(tta_passes):
-        augmented = AUG_LAYER(batch_x, training=True)  # apply random transform
-        p = model.predict_on_batch(augmented)  # handles batch dims better
-        preds += p
+        aug = AUG_LAYER(batch_x, training=True)          # random transform
+        p   = model(aug, training=False)                 # <── call model directly
+        preds += p.numpy()                               # convert to NumPy
 
     return preds / tta_passes
 

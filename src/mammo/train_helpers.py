@@ -79,23 +79,29 @@ def compile_model(model, cfg):
 #  Optional test-time augmentation (horizontal flip)                   #
 # ───────────────────────────────────────────────────────────────────── #
 
-def _tta_predict(model, batch):
-    p1 = model.predict(batch, verbose=0)
-    p2 = model.predict(tf.image.flip_left_right(batch), verbose=0)
-    return (p1 + p2) / 2.0
+def _tta_predict(model, batch, tta_passes=10):
+    preds = []
+    for _ in range(tta_passes):
+        augmented = _AUG(batch, training=True)
+        p = model.predict(augmented, verbose=0)
+        preds.append(p)
+    return np.mean(preds, axis=0)
 
-def evaluate(model, val_ds, tta=False):
+def evaluate(model, val_ds, tta=False, tta_passes=10):
     y_true, y_pred = [], []
     for x, y in val_ds:
         y_true.extend(y.numpy().ravel())
         if tta:
-            y_pred.extend(_tta_predict(model, x).ravel())
+            y_pred.extend(_tta_predict(model, x, tta_passes).ravel())
         else:
             y_pred.extend(model.predict(x, verbose=0).ravel())
+
     y_true = np.array(y_true)
     y_pred = np.array(y_pred)
+
+    # Optional: threshold sweep here
     auc = skm.roc_auc_score(y_true, y_pred)
-    acc = skm.accuracy_score(y_true, np.round(y_pred))
+    acc = skm.accuracy_score(y_true, np.round(y_pred))  # default threshold=0.5
     return dict(val_auc=float(auc), val_acc=float(acc),
                 y_true=y_true.tolist(), y_pred=y_pred.tolist())
 
@@ -141,7 +147,7 @@ def train_once(cfg, outdir):
 
     cb = [
     tf.keras.callbacks.EarlyStopping(
-        monitor="val_auc", mode="max", patience=3,
+        monitor="val_loss", mode="max", patience=6,
         restore_best_weights=True, verbose=1),
     
     tf.keras.callbacks.ModelCheckpoint(
@@ -149,7 +155,7 @@ def train_once(cfg, outdir):
         mode="max", save_best_only=True, verbose=1),
     
     tf.keras.callbacks.ReduceLROnPlateau(
-        monitor="val_loss", factor=0.2, patience=2,
+        monitor="val_loss", factor=0.5, patience=4,
         min_lr=1e-6, verbose=1),
 ]
 

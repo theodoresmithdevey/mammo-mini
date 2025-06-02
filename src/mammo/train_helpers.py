@@ -160,12 +160,14 @@ def train_once(cfg, outdir):
         monitor="val_loss", mode="max", patience=6,
         restore_best_weights=True, verbose=1),
     
+    # save only the weights → no extension fight, no signature troubles
     tf.keras.callbacks.ModelCheckpoint(
-        filepath=str(outdir / "best"),   #  <-- no extension
-        monitor="val_auc",
-        mode="max",
+        filepath=str(outdir / "best.weights.h5"),
+        monitor="val_auc", mode="max",
         save_best_only=True,
-        verbose=0),
+        save_weights_only=True,        # <── this line fixes everything
+        verbose=0,
+    ),
     
     tf.keras.callbacks.ReduceLROnPlateau(
         monitor="val_loss", factor=0.5, patience=4,
@@ -191,7 +193,8 @@ def train_once(cfg, outdir):
     save_json(cfg,   outdir/"config.json")
     save_json(metrics, outdir/"metrics.json")
     # final save
-    model.save(outdir / "model", save_format="tf")
+    model.save(outdir / "model.keras")   # optional, but fine to keep
+
 
     return metrics
 

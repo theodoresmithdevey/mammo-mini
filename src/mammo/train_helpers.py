@@ -80,10 +80,14 @@ def compile_model(model, cfg):
 # ───────────────────────────────────────────────────────────────────── #
 
 def _tta_predict(model, batch_x, tta_passes=10):
-    """Run TTA over a batch of images, return averaged predictions."""
-    preds = np.zeros((batch_x.shape[0], 1))  # assume binary classification
+    """Apply random augmentations at test time and average predictions."""
+    preds = np.zeros((batch_x.shape[0], 1))
+
     for _ in range(tta_passes):
-        preds += model.predict(batch_x, verbose=0)
+        augmented = AUG_LAYER(batch_x, training=True)  # ✅ key: training=True enables randomness
+        p = model.predict(augmented, verbose=0)
+        preds += p
+
     preds /= tta_passes
     return preds
 

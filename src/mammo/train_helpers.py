@@ -33,30 +33,36 @@ def build_model(cfg):
     else:
         raise ValueError(f"Unsupported model: {arch}")
 
-    # 🔒 Apply conditional freezing logic
-    if cfg.get("freeze_scheme") == "chougrad" and cfg["weights"] == "imagenet":
-        if arch == "vgg16":
-            freeze_until(base, "block4_conv1")  # unfreezes last two conv blocks
-        else:
-            freeze_until(base, "mixed9")        # unfreezes final inception modules
+    # 🔒 Use baseline freezing strategy - freeze all, then unfreeze last N layers
+    if cfg["weights"] == "imagenet":
+        for layer in base.layers:
+            layer.trainable = False
+        
+        # Architecture-specific unfreezing
+        if arch == "inceptionv3":
+            # Baseline uses -44 for InceptionV3 (approximately 2 inception blocks)
+            for layer in base.layers[-44:]:
+                layer.trainable = True
+        elif arch == "vgg16":
+            # For VGG16, unfreeze last 2 conv blocks (block4 and block5)
+            # VGG16 has 5 conv blocks, so we unfreeze the last ~8-10 layers
+            for layer in base.layers[-10:]:
+                layer.trainable = True
 
-    # 🧠 Classification head (updated)
+    # 🧠 Classification head - match baseline exactly
     x = layers.GlobalAveragePooling2D()(base.output)
-    x = layers.BatchNormalization()(x)
-    x = layers.Dropout(0.3)(x)
-    x = layers.Dense(256, activation='relu')(x)
-    x = layers.BatchNormalization()(x)
-    x = layers.Dropout(0.3)(x)
+    x = layers.Dense(256, activation='relu', kernel_regularizer=regularizers.l2(0.001))(x)  # Add L2 regularization
+    x = layers.Dropout(0.5)(x)  # Use 0.5 dropout like baseline
     out = layers.Dense(1, activation='sigmoid')(x)
-
 
     model = models.Model(base.input, out)
 
-    # 🛠 Optimizer + LR
-    lr = 1e-3 if cfg["optimiser"].lower() == "adam" else 1e-2
-    opt = optimizers.Adam(learning_rate=lr) if cfg["optimiser"].lower() == "adam" else optimizers.SGD(learning_rate=lr, momentum=0.9)
+    # 🛠 Optimizer + LR - match baseline exactly
+    lr = 1e-3  # baseline uses Adam(1e-3)
+    opt = optimizers.Adam(learning_rate=lr)
 
-    model.compile(optimizer=opt, loss="binary_crossentropy", metrics=["acc", "AUC"])
+    model.compile(optimizer=opt, loss="binary_crossentropy", 
+                 metrics=["accuracy", tf.keras.metrics.AUC(name="AUC")])
     return model
 
 

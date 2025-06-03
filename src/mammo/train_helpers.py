@@ -23,8 +23,8 @@ from .utils import set_seed, save_json
 def build_model(cfg):
     
     img_size = cfg["input_size"]
-    arch     = cfg["model"]
-    weights  = None if cfg["weights"] == "random" else "imagenet"
+    arch = cfg["model"]
+    weights = None if cfg["weights"] == "random" else "imagenet"
 
     if arch == "vgg16":
         base = applications.VGG16(include_top=False, weights=weights, input_shape=(img_size, img_size, 3))
@@ -33,36 +33,49 @@ def build_model(cfg):
     else:
         raise ValueError(f"Unsupported model: {arch}")
 
-    # 🔒 Use baseline freezing strategy - freeze all, then unfreeze last N layers
+    # 🎯 EXACT CHOUGRAD FREEZING: Unfreeze only last 2 convolutional blocks
     if cfg["weights"] == "imagenet":
+        # First, freeze everything
         for layer in base.layers:
             layer.trainable = False
         
-        # Architecture-specific unfreezing
-        if arch == "inceptionv3":
-            # Baseline uses -44 for InceptionV3 (approximately 2 inception blocks)
-            for layer in base.layers[-44:]:
-                layer.trainable = True
-        elif arch == "vgg16":
-            # For VGG16, unfreeze last 2 conv blocks (block4 and block5)
-            # VGG16 has 5 conv blocks, so we unfreeze the last ~8-10 layers
-            for layer in base.layers[-10:]:
-                layer.trainable = True
+        if arch == "vgg16":
+            # VGG16: Unfreeze block4 and block5 ONLY (last 2 conv blocks)
+            for layer in base.layers:
+                if 'block4' in layer.name or 'block5' in layer.name:
+                    layer.trainable = True
+                    
+        elif arch == "inceptionv3":
+            # InceptionV3: Unfreeze mixed9 and mixed10 ONLY (last 2 inception blocks)
+            for layer in base.layers:
+                if 'mixed9' in layer.name or 'mixed10' in layer.name:
+                    layer.trainable = True
 
-    # 🧠 Classification head - match baseline exactly
+    # 🧠 Classification head - baseline architecture with focal loss
     x = layers.GlobalAveragePooling2D()(base.output)
-    x = layers.Dense(256, activation='relu', kernel_regularizer=regularizers.l2(0.001))(x)  # Add L2 regularization
-    x = layers.Dropout(0.5)(x)  # Use 0.5 dropout like baseline
+    x = layers.Dense(256, activation='relu', kernel_regularizer=regularizers.l2(0.001))(x)
+    x = layers.Dropout(0.5)(x)
     out = layers.Dense(1, activation='sigmoid')(x)
 
     model = models.Model(base.input, out)
 
-    # 🛠 Optimizer + LR - match baseline exactly
-    lr = 1e-3  # baseline uses Adam(1e-3)
-    opt = optimizers.Adam(learning_rate=lr)
+    # 🛠 Optimizer + Loss - use focal loss for class balance
+    lr = 1e-3 if cfg["optimiser"].lower() == "adam" else 1e-2
+    
+    if cfg["optimiser"].lower() == "adam":
+        opt = optimizers.Adam(learning_rate=lr)
+    else:
+        opt = optimizers.SGD(learning_rate=lr, momentum=0.9)
 
-    model.compile(optimizer=opt, loss="binary_crossentropy", 
-                 metrics=["accuracy", tf.keras.metrics.AUC(name="AUC")])
+    model.compile(
+        optimizer=opt,
+        loss=tf.keras.losses.BinaryFocalCrossentropy(
+            gamma=2.0,  # Focus on hard examples
+            alpha=0.25  # Weight positive class more
+        ),
+        metrics=["accuracy", tf.keras.metrics.AUC(name="AUC")]
+    )
+    
     return model
 
 

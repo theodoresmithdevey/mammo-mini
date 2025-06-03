@@ -155,31 +155,31 @@ def train_once(cfg, outdir):
 
     # Fix early stopping callback
     cb = [
-        tf.keras.callbacks.EarlyStopping(
-            monitor="val_auc",  # Changed from val_loss
-            mode="max",         # max for AUC, not min
-            patience=6,
-            restore_best_weights=True, 
-            verbose=1
-        ),
-        
-        tf.keras.callbacks.ModelCheckpoint(
-            filepath=outdir / "best.weights.h5",
-            monitor="val_auc",
-            mode="max",
-            save_best_only=True,
-            save_weights_only=True,
-            verbose=0,
-        ),
-        
-        tf.keras.callbacks.ReduceLROnPlateau(
-            monitor="val_loss", 
-            factor=0.5, 
-            patience=4,
-            min_lr=1e-6, 
-            verbose=1
-        ),
-    ]
+    tf.keras.callbacks.EarlyStopping(
+        monitor="val_AUC",  # Changed to match Keras output
+        mode="max",
+        patience=6,
+        restore_best_weights=True, 
+        verbose=1
+    ),
+    
+    tf.keras.callbacks.ModelCheckpoint(
+        filepath=outdir / "best.weights.h5",
+        monitor="val_AUC",  # Changed to match Keras output
+        mode="max",
+        save_best_only=True,
+        save_weights_only=True,
+        verbose=0,
+    ),
+    
+    tf.keras.callbacks.ReduceLROnPlateau(
+        monitor="val_loss", 
+        factor=0.5, 
+        patience=4,
+        min_lr=1e-6, 
+        verbose=1
+    ),
+    ]   
 
     hist = model.fit(
         train_ds,

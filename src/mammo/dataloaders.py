@@ -100,10 +100,10 @@ def _make_dataframe(root: pathlib.Path, view: str):
 # 3. tf.data builder                                                    #
 # --------------------------------------------------------------------- #
 def _build_tfds(df, img_size, batch, is_train, preprocess_fn):
-    paths  = df['filepath'].values
+    paths = df['filepath'].values
     labels = df['label'].values
 
-    ds_paths  = tf.data.Dataset.from_tensor_slices(paths)
+    ds_paths = tf.data.Dataset.from_tensor_slices(paths)
     ds_labels = tf.data.Dataset.from_tensor_slices(labels)
 
     def _load(path, y):
@@ -114,10 +114,23 @@ def _build_tfds(df, img_size, batch, is_train, preprocess_fn):
         return img, tf.expand_dims(y, -1)
 
     ds = tf.data.Dataset.zip((ds_paths, ds_labels))
-    ds = ds.map(_load, num_parallel_calls=tf.data.AUTOTUNE)
+    
     if is_train:
+        # 🎯 CRITICAL FIX: Shuffle BEFORE expensive operations!
+        ds = ds.shuffle(4096, seed=None, reshuffle_each_iteration=True)
+        
+        # Then do expensive mapping
+        ds = ds.map(_load, num_parallel_calls=tf.data.AUTOTUNE)
+        
+        # Then augmentation
         ds = ds.map(lambda x, y: (_AUG(x), y), num_parallel_calls=tf.data.AUTOTUNE)
-        ds = ds.shuffle(1024, seed=123)
+        
+        # Optional: Light shuffle after augmentation
+        ds = ds.shuffle(512, seed=None, reshuffle_each_iteration=True)
+    else:
+        # For validation: just mapping, no shuffle
+        ds = ds.map(_load, num_parallel_calls=tf.data.AUTOTUNE)
+    
     return ds.batch(batch).prefetch(tf.data.AUTOTUNE)
 
 

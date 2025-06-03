@@ -28,8 +28,11 @@ def build_model(cfg):
 
     if arch == "vgg16":
         base = applications.VGG16(include_top=False, weights=weights, input_shape=(img_size, img_size, 3))
+        # Print model input shape
+        print(f"VGG16 input shape: {base.input_shape}")
     elif arch == "inceptionv3":
         base = applications.InceptionV3(include_top=False, weights=weights, input_shape=(img_size, img_size, 3))
+        print(f"InceptionV3 input shape: {base.input_shape}")
     else:
         raise ValueError(f"Unsupported model: {arch}")
 
@@ -60,6 +63,9 @@ def build_model(cfg):
     out = layers.Dense(1, activation='sigmoid')(x)
 
     model = models.Model(base.input, out)
+    
+    # Print model output shape for debugging
+    print(f"Model output shape: {model.output_shape}")
 
     # 🛠 OPTIMIZER + LOSS: Different strategies for random vs pretrained
     lr = 1e-3 if cfg["optimiser"].lower() == "adam" else 1e-2
@@ -119,18 +125,47 @@ def evaluate(model, val_ds, tta=False, tta_passes=10):
     import sklearn.metrics as skm
 
     y_true, y_pred = [], []
+    
+    # Print validation dataset inspection
+    print("\nValidation dataset inspection:")
+    for batch_x, batch_y in val_ds.take(1):
+        print(f"Validation batch_x shape: {batch_x.shape}")
+        print(f"Validation batch_y shape: {batch_y.shape}")
+        print(f"Validation batch_y dtype: {batch_y.dtype}")
+        print(f"First few validation labels: {batch_y.numpy().flatten()[:10]}")
+    
     for batch_x, batch_y in val_ds:
-        y_true.extend(batch_y.numpy().ravel())
+        # Print the raw batch_y for debugging
+        if len(y_true) == 0:
+            print(f"Raw batch_y: {batch_y}")
+        
+        # Ensure batch_y is properly converted to a numpy array
+        batch_y_np = batch_y.numpy().flatten()
+        y_true.extend(batch_y_np)
 
         if tta:
             batch_preds = _tta_predict(model, batch_x, tta_passes)
         else:
             batch_preds = model.predict(batch_x, verbose=0)
 
-        y_pred.extend(batch_preds.ravel())
+        # Flatten predictions properly
+        batch_preds_np = batch_preds.flatten()
+        y_pred.extend(batch_preds_np)
+        
+        # Early debugging - print first batch
+        if len(y_true) <= len(batch_y_np):
+            print(f"First batch true labels: {batch_y_np}")
+            print(f"First batch predictions: {batch_preds_np}")
 
     y_true = np.array(y_true)
     y_pred = np.array(y_pred)
+    
+    # Verify final arrays
+    print(f"\nFinal evaluation arrays:")
+    print(f"y_true shape: {y_true.shape}, dtype: {y_true.dtype}")
+    print(f"y_pred shape: {y_pred.shape}, dtype: {y_pred.dtype}")
+    print(f"y_true unique values: {np.unique(y_true)}")
+    print(f"y_pred range: {np.min(y_pred):.4f} to {np.max(y_pred):.4f}")
 
     auc = skm.roc_auc_score(y_true, y_pred)
     acc = skm.accuracy_score(y_true, np.round(y_pred))  # threshold 0.5

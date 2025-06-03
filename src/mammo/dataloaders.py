@@ -24,13 +24,14 @@ ZIP_NAME    = "cbis-ddsm-breast-cancer-image-dataset.zip"
 
 IMG_SIZE = {224: (224, 224), 512: (512, 512)}
 
+# Updated to match baseline training augmentation exactly
 _AUG = tf.keras.Sequential([
-    tf.keras.layers.RandomFlip("horizontal"),
-    tf.keras.layers.RandomRotation(0.055),
-    tf.keras.layers.RandomTranslation(0.1,0.1),
-    tf.keras.layers.RandomZoom(0.2),
-    tf.keras.layers.RandomShear(0.2),
-], name="augment")
+    tf.keras.layers.RandomFlip("horizontal"),           # horizontal_flip=True
+    tf.keras.layers.RandomRotation(0.056),              # rotation_range=20 degrees (20/360 = 0.056)
+    tf.keras.layers.RandomTranslation(0.1, 0.1),        # width_shift_range=0.1, height_shift_range=0.1
+    tf.keras.layers.RandomShear(0.2),                   # shear_range=0.2
+    tf.keras.layers.RandomZoom(0.2),                    # zoom_range=0.2
+], name="baseline_training_augment")
 
 # --------------------------------------------------------------------- #
 # 1. Download + unzip                                                   #
@@ -82,11 +83,11 @@ def _make_dataframe(root: pathlib.Path, view: str):
     merged = merged[['image_path', 'label']].rename(columns={'image_path': 'filepath'})
     merged['label_str'] = merged['label'].map({0: 'benign', 1: 'malignant'})
 
-    # stratified split 70/15/15
+    # Updated to match baseline split: 80/10/10 instead of 70/15/15
     train_df, temp_df = train_test_split(
-        merged, test_size=0.30, stratify=merged['label_str'], random_state=42)
+        merged, test_size=0.20, stratify=merged['label_str'], random_state=42)  # 20% for val+test
     val_df, test_df = train_test_split(
-        temp_df, test_size=0.50, stratify=temp_df['label_str'], random_state=42)
+        temp_df, test_size=0.50, stratify=temp_df['label_str'], random_state=42)  # 10% each
 
     train_df['split'] = 'train'
     val_df['split']   = 'val'
@@ -158,4 +159,3 @@ def get_loaders(cfg):
 
 # Export the augmentation layer
 AUG_LAYER = _AUG
-

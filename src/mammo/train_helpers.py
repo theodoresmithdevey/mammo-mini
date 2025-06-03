@@ -41,6 +41,7 @@ def build_model(cfg):
         
         # Unfreeze last 2 conv blocks (Chougrad strategy)
         if arch == "vgg16":
+            # For VGG16, explicitly unfreeze block4 and block5
             for layer in base.layers:
                 if 'block4' in layer.name or 'block5' in layer.name:
                     layer.trainable = True
@@ -90,23 +91,6 @@ def build_model(cfg):
     
     return model
 
-
-def compile_model(model, cfg):
-    lr = 1e-3 if cfg["optimiser"]=="Adam" else 1e-2
-    if cfg["optimiser"].lower() == "adam":
-        opt = tf.keras.optimizers.Adam(lr)
-    else:
-        opt = tf.keras.optimizers.SGD(lr, momentum=0.9, nesterov=True)
-
-    model.compile(
-        optimizer=optimizers.Adam(learning_rate=1e-3),
-        loss=tf.keras.losses.BinaryFocalCrossentropy(
-            gamma=2.0,  # Focus more on hard examples
-            alpha=0.25  # Give more weight to positive (malignant) class
-        ),
-        metrics=["accuracy", tf.keras.metrics.AUC(name="AUC")]
-    )
-    return model
 
 # ───────────────────────────────────────────────────────────────────── #
 #  Optional test-time augmentation (horizontal flip)                   #
@@ -191,14 +175,18 @@ def train_once(cfg, outdir):
     # data
     train_ds, val_ds = get_loaders(cfg)
 
-    # model - FIXED: only build and compile once
-    model = build_model(cfg)  # This already compiles the model
-    # Remove this line: model = compile_model(build_model(cfg), cfg)
-
+    # model - build once
+    model = build_model(cfg)  
+    
+    # Debug trainable layers to verify VGG16 has proper layer freezing
+    if cfg["model"] == "vgg16":
+        print("Verifying VGG16 trainable layers:")
+        debug_trainable_layers(model, n_last=20)
+    
     # Fix early stopping callback
     cb = [
     tf.keras.callbacks.EarlyStopping(
-        monitor="val_AUC",  # Changed to match Keras output
+        monitor="val_AUC",  # Match metric name from model.compile
         mode="max",
         patience=6,
         restore_best_weights=True, 
@@ -207,7 +195,7 @@ def train_once(cfg, outdir):
     
     tf.keras.callbacks.ModelCheckpoint(
         filepath=outdir / "best.weights.h5",
-        monitor="val_AUC",  # Changed to match Keras output
+        monitor="val_AUC",  # Match metric name from model.compile
         mode="max",
         save_best_only=True,
         save_weights_only=True,
@@ -243,6 +231,3 @@ def train_once(cfg, outdir):
     model.save(outdir / "model.keras")
 
     return metrics
-
-
-

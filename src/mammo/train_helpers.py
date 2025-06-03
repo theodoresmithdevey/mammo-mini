@@ -80,22 +80,13 @@ def compile_model(model, cfg):
 # ───────────────────────────────────────────────────────────────────── #
 
 def _tta_predict(model, batch_x, tta_passes=10):
-<<<<<<< HEAD
-    preds = np.zeros((batch_x.shape[0], 1), dtype=float)
+    """Average predictions over *tta_passes* random augmentations."""
+    preds = np.zeros((batch_x.shape[0], 1), dtype=np.float32)
 
     for _ in range(tta_passes):
-        aug = AUG_LAYER(batch_x, training=True)          # stochastic aug
-        p   = model.predict(aug, verbose=0)              #  ← use predict
-        preds += p
-=======
-    """Average predictions over N stochastic Augment passes."""
-    preds = np.zeros((batch_x.shape[0], 1), dtype=float)
-
-    for _ in range(tta_passes):
-        aug = AUG_LAYER(batch_x, training=True)          # random transform
-        p   = model(aug, training=False)                 # <── call model directly
-        preds += p.numpy()                               # convert to NumPy
->>>>>>> e9b3b236f1d679459e066aa796e5464a98ae3238
+        aug_batch = AUG_LAYER(batch_x, training=True)   # random flip/zoom …
+        aug_batch = tf.convert_to_tensor(aug_batch)     # make sure it’s a tensor
+        preds    += model.predict(aug_batch, verbose=0) # concrete-eager call
 
     return preds / tta_passes
 
@@ -171,18 +162,11 @@ def train_once(cfg, outdir):
     
     # save only the weights → no extension fight, no signature troubles
     tf.keras.callbacks.ModelCheckpoint(
-<<<<<<< HEAD
         filepath=outdir / "best.weights.h5",  # any name ending in .h5 is fine
         monitor="val_auc",
         mode="max",
         save_best_only=True,
         save_weights_only=True,              #  ← IMPORTANT
-=======
-        filepath=str(outdir / "best.weights.h5"),
-        monitor="val_auc", mode="max",
-        save_best_only=True,
-        save_weights_only=True,        # <── this line fixes everything
->>>>>>> e9b3b236f1d679459e066aa796e5464a98ae3238
         verbose=0,
     ),
     

@@ -12,7 +12,7 @@ cfg keys required:
 
 The code mirrors the Colab notebook logic exactly.
 """
-
+import numpy as np
 import os, subprocess, zipfile, random, pathlib, pandas as pd, tensorflow as tf
 from sklearn.model_selection import train_test_split
 from tensorflow.keras.applications.vgg16 import preprocess_input as preprocess_vgg
@@ -229,5 +229,5 @@ def get_loaders(cfg):
     
     return train_ds, val_ds
 
-# Export the augmentation layer
+# Export the aug npmentation layer
 AUG_LAYER = _AUG

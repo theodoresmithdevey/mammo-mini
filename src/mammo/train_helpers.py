@@ -160,11 +160,13 @@ def train_once(cfg, outdir):
         restore_best_weights=True, verbose=1),
     
     tf.keras.callbacks.ModelCheckpoint(
-        filepath=outdir/"best.keras",
+        filepath=outdir / "best.weights.h5",  # any name ending in .h5 is fine
         monitor="val_auc",
         mode="max",
         save_best_only=True,
-        verbose=0),
+        save_weights_only=True,              #  ← IMPORTANT
+        verbose=0,
+    ),
     
     tf.keras.callbacks.ReduceLROnPlateau(
         monitor="val_loss", factor=0.5, patience=4,

@@ -80,21 +80,18 @@ def compile_model(model, cfg):
 # ───────────────────────────────────────────────────────────────────── #
 
 def _tta_predict(model, batch_x, tta_passes=10):
-    """Fixed TTA that works with batches"""
+    """TTA with baseline augmentations: horizontal_flip, rotation_range=15, zoom_range=0.1"""
     preds = np.zeros((batch_x.shape[0], 1), dtype=np.float32)
     
-    # Create a batch-compatible augmentation layer
-    batch_aug_layer = tf.keras.Sequential([
-        tf.keras.layers.RandomFlip("horizontal"),
-        tf.keras.layers.RandomRotation(0.055),
-        tf.keras.layers.RandomTranslation(0.1, 0.1),
-        tf.keras.layers.RandomZoom(0.2),
-        tf.keras.layers.RandomShear(0.2),
-    ], name="batch_augment")
+    # Create baseline-compatible augmentation layer
+    baseline_aug = tf.keras.Sequential([
+        tf.keras.layers.RandomFlip("horizontal"),     # horizontal_flip=True
+        tf.keras.layers.RandomRotation(0.042),        # rotation_range=15 degrees (15/360 = 0.042)
+        tf.keras.layers.RandomZoom(0.1),              # zoom_range=0.1
+    ], name="baseline_tta_augment")
     
     for _ in range(tta_passes):
-        # Use the batch-compatible augmentation
-        aug_batch = batch_aug_layer(batch_x, training=True)
+        aug_batch = baseline_aug(batch_x, training=True)
         preds += model(aug_batch, training=False).numpy()
     
     return preds / tta_passes

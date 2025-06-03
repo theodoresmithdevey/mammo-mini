@@ -149,29 +149,37 @@ def train_once(cfg, outdir):
     # data
     train_ds, val_ds = get_loaders(cfg)
 
-    # model
-    model = compile_model(build_model(cfg), cfg)
+    # model - FIXED: only build and compile once
+    model = build_model(cfg)  # This already compiles the model
+    # Remove this line: model = compile_model(build_model(cfg), cfg)
 
+    # Fix early stopping callback
     cb = [
-    tf.keras.callbacks.EarlyStopping(
-        monitor="val_loss", mode="max", patience=6,
-        restore_best_weights=True, verbose=1),
-    
-    # save only the weights → no extension fight, no signature troubles
-    tf.keras.callbacks.ModelCheckpoint(
-        filepath=outdir / "best.weights.h5",  # any name ending in .h5 is fine
-        monitor="val_auc",
-        mode="max",
-        save_best_only=True,
-        save_weights_only=True,              #  ← IMPORTANT
-        verbose=0,
-    ),
-    
-    tf.keras.callbacks.ReduceLROnPlateau(
-        monitor="val_loss", factor=0.5, patience=4,
-        min_lr=1e-6, verbose=1),
-]
-
+        tf.keras.callbacks.EarlyStopping(
+            monitor="val_auc",  # Changed from val_loss
+            mode="max",         # max for AUC, not min
+            patience=6,
+            restore_best_weights=True, 
+            verbose=1
+        ),
+        
+        tf.keras.callbacks.ModelCheckpoint(
+            filepath=outdir / "best.weights.h5",
+            monitor="val_auc",
+            mode="max",
+            save_best_only=True,
+            save_weights_only=True,
+            verbose=0,
+        ),
+        
+        tf.keras.callbacks.ReduceLROnPlateau(
+            monitor="val_loss", 
+            factor=0.5, 
+            patience=4,
+            min_lr=1e-6, 
+            verbose=1
+        ),
+    ]
 
     hist = model.fit(
         train_ds,
@@ -188,11 +196,9 @@ def train_once(cfg, outdir):
 
     # persist artefacts
     outdir.mkdir(parents=True, exist_ok=True)
-    save_json(cfg,   outdir/"config.json")
+    save_json(cfg, outdir/"config.json")
     save_json(metrics, outdir/"metrics.json")
-    # final save
-    model.save(outdir / "model.keras")   # optional, but fine to keep
-
+    model.save(outdir / "model.keras")
 
     return metrics
 

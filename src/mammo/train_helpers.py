@@ -86,14 +86,14 @@ def compile_model(model, cfg):
 # ───────────────────────────────────────────────────────────────────── #
 
 def _tta_predict(model, batch_x, tta_passes=10):
-    """TTA with baseline augmentations: horizontal_flip, rotation_range=15, zoom_range=0.1"""
+    """TTA with baseline-like fill behavior"""
     preds = np.zeros((batch_x.shape[0], 1), dtype=np.float32)
     
-    # Create baseline-compatible augmentation layer
+    # Create baseline-compatible augmentation layer with fill_mode approximation
     baseline_aug = tf.keras.Sequential([
-        tf.keras.layers.RandomFlip("horizontal"),     # horizontal_flip=True
-        tf.keras.layers.RandomRotation(0.042),        # rotation_range=15 degrees (15/360 = 0.042)
-        tf.keras.layers.RandomZoom(0.1),              # zoom_range=0.1
+        tf.keras.layers.RandomFlip("horizontal"),
+        tf.keras.layers.RandomRotation(0.042, fill_mode='nearest'),        # Add fill_mode
+        tf.keras.layers.RandomZoom(0.1, fill_mode='nearest'),              # Add fill_mode
     ], name="baseline_tta_augment")
     
     for _ in range(tta_passes):

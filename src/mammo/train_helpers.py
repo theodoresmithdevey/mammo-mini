@@ -80,12 +80,22 @@ def compile_model(model, cfg):
 # ───────────────────────────────────────────────────────────────────── #
 
 def _tta_predict(model, batch_x, tta_passes=10):
+<<<<<<< HEAD
     preds = np.zeros((batch_x.shape[0], 1), dtype=float)
 
     for _ in range(tta_passes):
         aug = AUG_LAYER(batch_x, training=True)          # stochastic aug
         p   = model.predict(aug, verbose=0)              #  ← use predict
         preds += p
+=======
+    """Average predictions over N stochastic Augment passes."""
+    preds = np.zeros((batch_x.shape[0], 1), dtype=float)
+
+    for _ in range(tta_passes):
+        aug = AUG_LAYER(batch_x, training=True)          # random transform
+        p   = model(aug, training=False)                 # <── call model directly
+        preds += p.numpy()                               # convert to NumPy
+>>>>>>> e9b3b236f1d679459e066aa796e5464a98ae3238
 
     return preds / tta_passes
 
@@ -159,12 +169,20 @@ def train_once(cfg, outdir):
         monitor="val_loss", mode="max", patience=6,
         restore_best_weights=True, verbose=1),
     
+    # save only the weights → no extension fight, no signature troubles
     tf.keras.callbacks.ModelCheckpoint(
+<<<<<<< HEAD
         filepath=outdir / "best.weights.h5",  # any name ending in .h5 is fine
         monitor="val_auc",
         mode="max",
         save_best_only=True,
         save_weights_only=True,              #  ← IMPORTANT
+=======
+        filepath=str(outdir / "best.weights.h5"),
+        monitor="val_auc", mode="max",
+        save_best_only=True,
+        save_weights_only=True,        # <── this line fixes everything
+>>>>>>> e9b3b236f1d679459e066aa796e5464a98ae3238
         verbose=0,
     ),
     
@@ -191,7 +209,9 @@ def train_once(cfg, outdir):
     outdir.mkdir(parents=True, exist_ok=True)
     save_json(cfg,   outdir/"config.json")
     save_json(metrics, outdir/"metrics.json")
-    model.save(outdir/"model.keras")
+    # final save
+    model.save(outdir / "model.keras")   # optional, but fine to keep
+
 
     return metrics
 

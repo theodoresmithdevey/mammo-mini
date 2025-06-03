@@ -173,6 +173,32 @@ def evaluate(model, val_ds, tta=False, tta_passes=10):
                 y_true=y_true.tolist(), y_pred=y_pred.tolist())
 
 
+# ───────────────────────────────────────────────────────────────────── #
+#  Freeze strategy helpers                                                #
+# ───────────────────────────────────────────────────────────────────── #
+
+def freeze_until(model, stop_substring: str):
+    """
+    Set layer.trainable = False for every layer whose name does NOT
+    contain `stop_substring`.  Everything at and after the first match
+    stays trainable.
+
+    Example:
+        freeze_until(base_model, "block4_conv1")   # VGG16
+        freeze_until(base_model, "mixed9")         # InceptionV3
+    """
+    reached = False
+    for layer in model.layers:
+        if stop_substring in layer.name:
+            reached = True
+        layer.trainable = reached  # False until we "reach" the block
+
+def debug_trainable_layers(model, n_last=10):
+    """Print last n layer names + trainable flag for sanity check."""
+    for l in model.layers[-n_last:]:
+        print(f"{l.name:25s}  trainable={l.trainable}")
+
+
 # ------------------------------------------------------------------
 #  Compile model function (needed for the ablation sweep)
 # ------------------------------------------------------------------
@@ -225,7 +251,8 @@ def train_once(cfg, outdir):
     # Debug trainable layers to verify VGG16 has proper layer freezing
     if cfg["model"] == "vgg16":
         print("Verifying VGG16 trainable layers:")
-        debug_trainable_layers(model, n_last=20)
+        for l in model.layers[-20:]:
+            print(f"{l.name:25s}  trainable={l.trainable}")
     
     # Fix early stopping callback
     cb = [

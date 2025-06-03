@@ -173,9 +173,11 @@ def train_once(cfg, outdir):
     set_seed(cfg["seed"])
 
     # data
+    print(f"\n{'='*40}\nLoading data for {cfg['model']} model\n{'='*40}")
     train_ds, val_ds = get_loaders(cfg)
 
     # model - build once
+    print(f"\n{'='*40}\nBuilding {cfg['model']} model\n{'='*40}")
     model = build_model(cfg)  
     
     # Debug trainable layers to verify VGG16 has proper layer freezing

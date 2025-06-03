@@ -203,9 +203,10 @@ def get_loaders(cfg):
     model_type = cfg["model"].lower()
 
     # Choose preprocessing function based on model
+
     if model_type == "vgg16":
         print("Using VGG16 preprocessing")
-        preprocess_fn = preprocess_vgg
+        img = img / 255.0  # Simple rescaling
     elif model_type == "inceptionv3":
         print("Using InceptionV3 preprocessing")
         preprocess_fn = preprocess_inception

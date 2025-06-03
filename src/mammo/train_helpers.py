@@ -60,6 +60,7 @@ def build_model(cfg):
     x = layers.GlobalAveragePooling2D()(base.output)
     x = layers.Dense(256, activation='relu', kernel_regularizer=regularizers.l2(0.001))(x)
     x = layers.Dropout(0.5)(x)
+    x = layers.BatchNormalization()(x)
     out = layers.Dense(1, activation='sigmoid')(x)
 
     model = models.Model(base.input, out)
@@ -68,7 +69,7 @@ def build_model(cfg):
     print(f"Model output shape: {model.output_shape}")
 
     # 🛠 OPTIMIZER + LOSS: Different strategies for random vs pretrained
-    lr = 1e-3 if cfg["optimiser"].lower() == "adam" else 1e-2
+    lr = 1e-4 if cfg["model"].lower() == "vgg16" else 1e-3
     
     if cfg["optimiser"].lower() == "adam":
         opt = optimizers.Adam(learning_rate=lr)

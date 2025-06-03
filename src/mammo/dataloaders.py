@@ -100,9 +100,23 @@ def _make_dataframe(root: pathlib.Path, view: str):
 # 3. tf.data builder                                                    #
 # --------------------------------------------------------------------- #
 def _build_tfds(df, img_size, batch, is_train, preprocess_fn):
-    paths = df['filepath'].values
-    labels = df['label'].values
+    """Build TensorFlow dataset with correct preprocessing and shuffling."""
+    # Apply a DataFrame-level shuffle first for VGG16 models
+    # This ensures proper class distribution before creating the dataset
+    df_shuffled = df.sample(frac=1.0).reset_index(drop=True)
+    
+    # Debug: print class distribution
+    malignant_count = df_shuffled['label'].sum()
+    total_count = len(df_shuffled)
+    print(f"Dataset class distribution: {malignant_count}/{total_count} malignant "
+          f"({100*malignant_count/total_count:.1f}%)")
+    
+    paths = df_shuffled['filepath'].values
+    labels = df_shuffled['label'].values
 
+    # Debug: print first few labels to verify shuffle
+    print(f"First 20 labels after shuffle: {labels[:20]}")
+    
     ds_paths = tf.data.Dataset.from_tensor_slices(paths)
     ds_labels = tf.data.Dataset.from_tensor_slices(labels)
 
@@ -116,22 +130,30 @@ def _build_tfds(df, img_size, batch, is_train, preprocess_fn):
     ds = tf.data.Dataset.zip((ds_paths, ds_labels))
     
     if is_train:
-        # 🎯 CRITICAL FIX: Shuffle BEFORE expensive operations!
-        ds = ds.shuffle(4096, seed=None, reshuffle_each_iteration=True)
+        # Use a large buffer size for better shuffling
+        buffer_size = min(len(paths), 4096)
+        ds = ds.shuffle(buffer_size, seed=42, reshuffle_each_iteration=True)
         
         # Then do expensive mapping
         ds = ds.map(_load, num_parallel_calls=tf.data.AUTOTUNE)
         
         # Then augmentation
         ds = ds.map(lambda x, y: (_AUG(x), y), num_parallel_calls=tf.data.AUTOTUNE)
-        
-        # Optional: Light shuffle after augmentation
-        ds = ds.shuffle(512, seed=None, reshuffle_each_iteration=True)
     else:
         # For validation: just mapping, no shuffle
         ds = ds.map(_load, num_parallel_calls=tf.data.AUTOTUNE)
     
-    return ds.batch(batch).prefetch(tf.data.AUTOTUNE)
+    # Create batches and prefetch
+    batched_ds = ds.batch(batch).prefetch(tf.data.AUTOTUNE)
+    
+    # Debug: check first few batches for class distribution if training
+    if is_train:
+        print("\nChecking class distribution in first 5 batches:")
+        for i, (_, batch_y) in enumerate(batched_ds.take(5)):
+            malignant_rate = tf.reduce_mean(batch_y).numpy()
+            print(f"Batch {i+1}: {malignant_rate:.3f} malignant rate")
+    
+    return batched_ds
 
 
 # --------------------------------------------------------------------- #
@@ -160,8 +182,10 @@ def get_loaders(cfg):
 
     # choose preprocessing function based on model
     if cfg["model"].lower() == "vgg16":
+        print("Using VGG16 preprocessing")
         preprocess_fn = preprocess_vgg
     elif cfg["model"].lower() == "inceptionv3":
+        print("Using InceptionV3 preprocessing")
         preprocess_fn = preprocess_inception
     else:
         raise ValueError("Unknown model architecture")

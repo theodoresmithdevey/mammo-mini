@@ -80,11 +80,11 @@ def compile_model(model, cfg):
 # ───────────────────────────────────────────────────────────────────── #
 
 def _tta_predict(model, batch_x, tta_passes=10):
-    preds = np.zeros((batch_x.shape[0], 1))
+    preds = np.zeros((batch_x.shape[0], 1), dtype=float)
 
     for _ in range(tta_passes):
-        augmented = _AUG(batch_x, training=True)  # apply random transform
-        p = model.predict_on_batch(augmented)  # handles batch dims better
+        aug = AUG_LAYER(batch_x, training=True)          # stochastic aug
+        p   = model.predict(aug, verbose=0)              #  ← use predict
         preds += p
 
     return preds / tta_passes

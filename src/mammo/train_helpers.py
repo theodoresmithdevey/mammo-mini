@@ -80,14 +80,11 @@ def compile_model(model, cfg):
 # ───────────────────────────────────────────────────────────────────── #
 
 def _tta_predict(model, batch_x, tta_passes=10):
-    """Average predictions over *tta_passes* random augmentations."""
     preds = np.zeros((batch_x.shape[0], 1), dtype=np.float32)
 
     for _ in range(tta_passes):
-        aug_batch = AUG_LAYER(batch_x, training=True)   # random flip/zoom …
-        aug_batch = tf.convert_to_tensor(aug_batch)     # make sure it’s a tensor
-        preds    += model.predict(aug_batch, verbose=0) # concrete-eager call
-
+        aug_batch = AUG_LAYER(batch_x, training=True)      # random flip/zoom…
+        preds += model(aug_batch, training=False).numpy()  # ← direct call
     return preds / tta_passes
 
 

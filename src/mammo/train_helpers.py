@@ -74,10 +74,12 @@ def compile_model(model, cfg):
         opt = tf.keras.optimizers.SGD(lr, momentum=0.9, nesterov=True)
 
     model.compile(
-        optimizer=opt,
-        loss="binary_crossentropy",
-        metrics=[tf.keras.metrics.AUC(name="auc"),
-                 tf.keras.metrics.BinaryAccuracy(name="acc")],
+        optimizer=optimizers.Adam(learning_rate=1e-3),
+        loss=tf.keras.losses.BinaryFocalCrossentropy(
+            gamma=2.0,  # Focus more on hard examples
+            alpha=0.25  # Give more weight to positive (malignant) class
+        ),
+        metrics=["accuracy", tf.keras.metrics.AUC(name="AUC")]
     )
     return model
 

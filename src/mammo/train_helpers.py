@@ -33,25 +33,26 @@ def build_model(cfg):
     else:
         raise ValueError(f"Unsupported model: {arch}")
 
-    # 🎯 EXACT CHOUGRAD FREEZING: Unfreeze only last 2 convolutional blocks
+    # 🎯 FREEZING STRATEGY: Only apply to ImageNet pretrained models
     if cfg["weights"] == "imagenet":
-        # First, freeze everything
+        # Freeze everything first
         for layer in base.layers:
             layer.trainable = False
         
+        # Unfreeze last 2 conv blocks (Chougrad strategy)
         if arch == "vgg16":
-            # VGG16: Unfreeze block4 and block5 ONLY (last 2 conv blocks)
             for layer in base.layers:
                 if 'block4' in layer.name or 'block5' in layer.name:
                     layer.trainable = True
-                    
         elif arch == "inceptionv3":
-            # InceptionV3: Unfreeze mixed9 and mixed10 ONLY (last 2 inception blocks)
             for layer in base.layers:
                 if 'mixed9' in layer.name or 'mixed10' in layer.name:
                     layer.trainable = True
+    
+    # For random weights: all layers trainable (no freezing)
+    # This happens automatically since layers are trainable by default
 
-    # 🧠 Classification head - baseline architecture with focal loss
+    # 🧠 Classification head
     x = layers.GlobalAveragePooling2D()(base.output)
     x = layers.Dense(256, activation='relu', kernel_regularizer=regularizers.l2(0.001))(x)
     x = layers.Dropout(0.5)(x)
@@ -59,7 +60,7 @@ def build_model(cfg):
 
     model = models.Model(base.input, out)
 
-    # 🛠 Optimizer + Loss - use focal loss for class balance
+    # 🛠 OPTIMIZER + LOSS: Different strategies for random vs pretrained
     lr = 1e-3 if cfg["optimiser"].lower() == "adam" else 1e-2
     
     if cfg["optimiser"].lower() == "adam":
@@ -67,14 +68,25 @@ def build_model(cfg):
     else:
         opt = optimizers.SGD(learning_rate=lr, momentum=0.9)
 
-    model.compile(
-        optimizer=opt,
-        loss=tf.keras.losses.BinaryFocalCrossentropy(
-            gamma=2.0,  # Focus on hard examples
-            alpha=0.25  # Weight positive class more
-        ),
-        metrics=["accuracy", tf.keras.metrics.AUC(name="AUC")]
-    )
+    # Use different loss strategies
+    if cfg["weights"] == "random":
+        # For random weights: use standard binary crossentropy
+        # Training from scratch works better with standard loss
+        model.compile(
+            optimizer=opt,
+            loss="binary_crossentropy",
+            metrics=["accuracy", tf.keras.metrics.AUC(name="AUC")]
+        )
+    else:
+        # For ImageNet pretrained: use focal loss for class balance
+        model.compile(
+            optimizer=opt,
+            loss=tf.keras.losses.BinaryFocalCrossentropy(
+                gamma=2.0,
+                alpha=0.25
+            ),
+            metrics=["accuracy", tf.keras.metrics.AUC(name="AUC")]
+        )
     
     return model
 

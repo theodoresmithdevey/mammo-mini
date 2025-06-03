@@ -99,11 +99,11 @@ def _make_dataframe(root: pathlib.Path, view: str):
 # --------------------------------------------------------------------- #
 # 3. tf.data builder                                                    #
 # --------------------------------------------------------------------- #
-def _build_tfds(df, img_size, batch, is_train, preprocess_fn, model_type):
+def _build_tfds(df, img_size, batch, is_train, preprocess_fn, model_type=""):
     """Build TensorFlow dataset with correct preprocessing and shuffling."""
-    # Apply a DataFrame-level shuffle first for VGG16 models
+    # Apply a DataFrame-level shuffle first
     # This ensures proper class distribution before creating the dataset
-    df_shuffled = df.sample(frac=1.0).reset_index(drop=True)
+    df_shuffled = df.sample(frac=1.0, random_state=42).reset_index(drop=True)
     
     # Debug: print class distribution
     malignant_count = df_shuffled['label'].sum()
@@ -111,36 +111,37 @@ def _build_tfds(df, img_size, batch, is_train, preprocess_fn, model_type):
     print(f"Dataset class distribution: {malignant_count}/{total_count} malignant "
           f"({100*malignant_count/total_count:.1f}%)")
     
+    # CRITICAL: Ensure labels are float32 before creating the dataset
+    df_shuffled['label'] = df_shuffled['label'].astype('float32')
+    
     paths = df_shuffled['filepath'].values
     labels = df_shuffled['label'].values
-    
-    # Ensure labels are float32 for both VGG16 and InceptionV3
-    labels = labels.astype('float32')
     
     # Debug: print first few labels to verify shuffle
     print(f"First 20 labels after shuffle: {labels[:20]}")
     
+    # Create tensor slices from PREPROCESSED numpy arrays to avoid issues
+    # This is crucial to prevent label corruption in the pipeline
     ds_paths = tf.data.Dataset.from_tensor_slices(paths)
     ds_labels = tf.data.Dataset.from_tensor_slices(labels)
 
     def _load(path, y):
+        # Load and preprocess image
         img = tf.io.read_file(path)
         img = tf.image.decode_png(img, channels=3)
         img = tf.image.resize(img, IMG_SIZE[img_size])
         img = preprocess_fn(img)
         
-        # Reshape label explicitly to match model expectations
-        # This is critical for compatibility across models
-        return img, tf.reshape(y, [1])
+        # CRITICAL: Ensure consistent label representation
+        y = tf.cast(y, tf.float32)  # Force float32
+        return img, tf.reshape(y, [1])  # Ensure shape is [1] not [1,1]
 
+    # Create dataset zip
     ds = tf.data.Dataset.zip((ds_paths, ds_labels))
-    
-    # Print the dataset structure for debugging
-    print(f"Dataset structure: {ds.element_spec}")
     
     if is_train:
         # Use a large buffer size for better shuffling
-        buffer_size = min(len(paths), 4096)
+        buffer_size = len(paths)  # Use full dataset size for perfect shuffling
         ds = ds.shuffle(buffer_size, seed=42, reshuffle_each_iteration=True)
         
         # Then do expensive mapping
@@ -152,42 +153,26 @@ def _build_tfds(df, img_size, batch, is_train, preprocess_fn, model_type):
         # For validation: just mapping, no shuffle
         ds = ds.map(_load, num_parallel_calls=tf.data.AUTOTUNE)
     
-    # Print the dataset structure after mapping for debugging
-    print(f"Dataset structure after mapping: {ds.element_spec}")
-    
-    # Create batches and prefetch
+    # Create batches without further shuffling
     batched_ds = ds.batch(batch).prefetch(tf.data.AUTOTUNE)
     
-    # Print the batched dataset structure for debugging
-    print(f"Batched dataset structure: {batched_ds.element_spec}")
-    
-    # Debug: check first few batches for class distribution if training
+    # Debug: check batch properties and content
     if is_train:
         print("\nChecking class distribution in first 5 batches:")
-        batch_data = []
-        for i, (imgs, batch_y) in enumerate(batched_ds.take(5)):
-            # Print the raw tensor for debugging
-            print(f"Batch {i+1} label tensor: {batch_y}")
-            print(f"Batch {i+1} label shape: {batch_y.shape}")
-            
-            # Calculate malignant rate
-            malignant_rate = tf.reduce_mean(tf.cast(batch_y, tf.float32))
-            print(f"Batch {i+1}: {malignant_rate:.3f} malignant rate")
-            
-            # Extract the actual label values for detailed inspection
-            y_values = batch_y.numpy().flatten()
-            batch_data.append((i+1, y_values, malignant_rate.numpy()))
-            
-            # Count unique values
-            unique_vals, counts = np.unique(y_values, return_counts=True)
-            print(f"  Unique values: {unique_vals}, counts: {counts}")
         
-        # Print detailed batch information
-        print("\nDetailed batch analysis:")
-        for batch_num, y_values, rate in batch_data:
-            print(f"Batch {batch_num}: {len(y_values)} samples, {rate:.3f} malignant rate")
-            if len(y_values) > 0:
-                print(f"  First 10 labels: {y_values[:10]}")
+        batch_data = []
+        for i, (_, batch_y) in enumerate(batched_ds.take(5)):
+            # Calculate malignant rate
+            batch_labels = batch_y.numpy().flatten()
+            rate = np.mean(batch_labels)
+            print(f"Batch {i+1}: {rate:.3f} malignant rate")
+            
+            # Show actual label values
+            if i < 2:  # For first two batches only
+                print(f"  Batch {i+1} labels: {batch_labels}")
+                # Count classes
+                unique, counts = np.unique(batch_labels, return_counts=True)
+                print(f"  Classes: {dict(zip(unique, counts))}")
     
     return batched_ds
 
@@ -217,7 +202,7 @@ def get_loaders(cfg):
     batch     = cfg.get('batch_size', 16)
     model_type = cfg["model"].lower()
 
-    # choose preprocessing function based on model
+    # Choose preprocessing function based on model
     if model_type == "vgg16":
         print("Using VGG16 preprocessing")
         preprocess_fn = preprocess_vgg
@@ -227,28 +212,20 @@ def get_loaders(cfg):
     else:
         raise ValueError("Unknown model architecture")
     
-    # Add debug mode to analyze labels directly before building dataset
-    train_subset = df[df.split == 'train']
-    print("\nDirect inspection of training labels:")
-    print(f"Label type: {train_subset['label'].dtype}")
-    print(f"Unique label values: {train_subset['label'].unique()}")
-    print(f"Label counts: {train_subset['label'].value_counts()}")
-    
-    # Convert labels to float32 before dataset creation
+    # IMPORTANT: Convert all labels to float32 in the dataframe itself
+    # This ensures consistent label types before creating the dataset
     df['label'] = df['label'].astype('float32')
+    
+    # Print info about dataset split sizes
+    print(f"Train set: {len(df[df.split == 'train'])} samples")
+    print(f"Val set: {len(df[df.split == 'val'])} samples")
+    print(f"Test set: {len(df[df.split == 'test'])} samples")
 
     train_ds = _build_tfds(df[df.split == 'train'], img_size, batch, is_train=True, 
                           preprocess_fn=preprocess_fn, model_type=model_type)
-    val_ds   = _build_tfds(df[df.split == 'val'],   img_size, batch, is_train=False, 
-                          preprocess_fn=preprocess_fn, model_type=model_type)
-    
-    # Verify dataset structure
-    print("\nDataset verification:")
-    for images, labels in train_ds.take(1):
-        print(f"Image batch shape: {images.shape}")
-        print(f"Label batch shape: {labels.shape}")
-        print(f"Label data type: {labels.dtype}")
-        print(f"First few labels: {labels.numpy().flatten()[:10]}")
+                          
+    val_ds = _build_tfds(df[df.split == 'val'], img_size, batch, is_train=False, 
+                        preprocess_fn=preprocess_fn, model_type=model_type)
     
     return train_ds, val_ds
 

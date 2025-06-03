@@ -174,29 +174,36 @@ def evaluate(model, val_ds, tta=False, tta_passes=10):
 
 
 # ------------------------------------------------------------------
-#  Freeze strategy helpers
+#  Compile model function (needed for the ablation sweep)
 # ------------------------------------------------------------------
 
-def freeze_until(model, stop_substring: str):
-    """
-    Set layer.trainable = False for every layer whose name does NOT
-    contain `stop_substring`.  Everything at and after the first match
-    stays trainable.
+def compile_model(model, cfg):
+    """Recompile an existing model with the appropriate optimizer and loss."""
+    lr = 1e-3 if cfg["optimiser"].lower() == "adam" else 1e-2
+    
+    if cfg["optimiser"].lower() == "adam":
+        opt = tf.keras.optimizers.Adam(learning_rate=lr)
+    else:
+        opt = tf.keras.optimizers.SGD(learning_rate=lr, momentum=0.9, nesterov=True)
 
-    Example:
-        freeze_until(base_model, "block4_conv1")   # VGG16
-        freeze_until(base_model, "mixed9")         # InceptionV3
-    """
-    reached = False
-    for layer in model.layers:
-        if stop_substring in layer.name:
-            reached = True
-        layer.trainable = reached  # False until we "reach" the block
-
-def debug_trainable_layers(model, n_last=10):
-    """Print last n layer names + trainable flag for sanity check."""
-    for l in model.layers[-n_last:]:
-        print(f"{l.name:25s}  trainable={l.trainable}")
+    # Use different loss strategies based on weights
+    if cfg["weights"] == "random":
+        model.compile(
+            optimizer=opt,
+            loss="binary_crossentropy",
+            metrics=["accuracy", tf.keras.metrics.AUC(name="AUC")]
+        )
+    else:
+        model.compile(
+            optimizer=opt,
+            loss=tf.keras.losses.BinaryFocalCrossentropy(
+                gamma=2.0,  # Focus more on hard examples
+                alpha=0.25  # Give more weight to positive (malignant) class
+            ),
+            metrics=["accuracy", tf.keras.metrics.AUC(name="AUC")]
+        )
+    
+    return model
 
 
 # ───────────────────────────────────────────────────────────────────── #

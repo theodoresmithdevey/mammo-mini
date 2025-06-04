@@ -127,20 +127,19 @@ def _build_tfds(df, img_size, batch, is_train, preprocess_fn, model_type=""):
 
     def _load(path, y):
         # Load and preprocess image
-        img = tf.io.read_file(path)
-        img = tf.image.decode_png(img, channels=3)
-        img = tf.image.resize(img, IMG_SIZE[img_size])
-        img = preprocess_fn(img)
+        img_data = tf.io.read_file(path)
+        img_data = tf.image.decode_png(img_data, channels=3)
+        img_data = tf.image.resize(img_data, IMG_SIZE[img_size])
+        img_data = preprocess_fn(img_data)
         
-        # CRITICAL: Ensure consistent label representation
-        y = tf.cast(y, tf.float32)  # Force float32
-
-            # For VGG16, provide labels as flat scalars
+        # Convert to float32
+        y_data = tf.cast(y, tf.float32)
+        
+        # For VGG16, provide labels as flat scalars
         if 'vgg16' in model_type.lower():
-            return img, tf.squeeze(tf.cast(y, tf.float32))  # Remove extra dimensions
+            return img_data, tf.squeeze(y_data)  # Remove extra dimensions
         else:
-            return img, tf.reshape(tf.cast(y, tf.float32), [1])
-        # return img, tf.reshape(y, [1])  # Ensure shape is [1] not [1,1]
+            return img_data, tf.reshape(y_data, [1])
 
     # Create dataset zip
     ds = tf.data.Dataset.zip((ds_paths, ds_labels))

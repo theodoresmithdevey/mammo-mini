@@ -212,7 +212,7 @@ def get_loaders(cfg):
     if model_type == "vgg16":
         print("Using VGG16 preprocessing")
         # Define a custom preprocessing function that does simple rescaling
-        preprocess_fn = lambda x: x / 255.0
+        preprocess_fn = preprocess_vgg
     elif model_type == "inceptionv3":
         print("Using InceptionV3 preprocessing")
         preprocess_fn = preprocess_inception

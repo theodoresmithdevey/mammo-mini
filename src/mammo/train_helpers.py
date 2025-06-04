@@ -69,7 +69,7 @@ def build_model(cfg):
     print(f"Model output shape: {model.output_shape}")
 
     # 🛠 OPTIMIZER + LOSS: Different strategies for random vs pretrained
-    lr = 1e-4 if cfg["model"].lower() == "vgg16" else 1e-3
+    lr = 1e-5 if cfg["model"].lower() == "vgg16" else 1e-3
     
     if cfg["optimiser"].lower() == "adam":
         opt = optimizers.Adam(learning_rate=lr)

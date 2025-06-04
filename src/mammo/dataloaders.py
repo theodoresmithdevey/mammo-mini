@@ -134,7 +134,13 @@ def _build_tfds(df, img_size, batch, is_train, preprocess_fn, model_type=""):
         
         # CRITICAL: Ensure consistent label representation
         y = tf.cast(y, tf.float32)  # Force float32
-        return img, tf.reshape(y, [1])  # Ensure shape is [1] not [1,1]
+
+            # For VGG16, provide labels as flat scalars
+        if 'vgg16' in model_type.lower():
+            return img, tf.squeeze(tf.cast(y, tf.float32))  # Remove extra dimensions
+        else:
+            return img, tf.reshape(tf.cast(y, tf.float32), [1])
+        # return img, tf.reshape(y, [1])  # Ensure shape is [1] not [1,1]
 
     # Create dataset zip
     ds = tf.data.Dataset.zip((ds_paths, ds_labels))

@@ -100,10 +100,57 @@ def _make_dataframe(root: pathlib.Path, view: str):
 # --------------------------------------------------------------------- #
 # 3. tf.data builder                                                    #
 # --------------------------------------------------------------------- #
+# Replace the _build_tfds function in dataloaders.py with this corrected version:
+
 def _build_tfds(df, img_size, batch, is_train, preprocess_fn, model_type=""):
-    """Build TensorFlow dataset with CORRECTED preprocessing order (augmentation before preprocessing)."""
+    """Build TensorFlow dataset with EXACT baseline preprocessing approach."""
+    
+    # ✅ FOR VALIDATION: Use ImageDataGenerator approach like baseline
+    if not is_train:
+        print(f"Using baseline-style validation preprocessing (ImageDataGenerator)")
+        from tensorflow.keras.preprocessing.image import ImageDataGenerator
+        
+        # Create exact baseline validation generator
+        val_gen = ImageDataGenerator(preprocessing_function=preprocess_fn)
+        
+        # Prepare dataframe with baseline-compatible format
+        df_val = df.copy()
+        df_val['label_str'] = df_val['label'].map({0: 'benign', 1: 'malignant'})
+        
+        # Create validation generator exactly like baseline
+        val_generator = val_gen.flow_from_dataframe(
+            df_val,
+            x_col='filepath',
+            y_col='label_str', 
+            target_size=(img_size, img_size),
+            batch_size=batch,
+            class_mode='binary',
+            shuffle=False  # No shuffling for validation
+        )
+        
+        # Convert to tf.data.Dataset for compatibility
+        def generator_to_dataset():
+            for batch_x, batch_y in val_generator:
+                # Ensure correct label format for model type
+                if 'vgg16' in model_type.lower():
+                    batch_y = batch_y.flatten()  # VGG16 expects flat labels
+                else:
+                    batch_y = batch_y.reshape(-1, 1)  # InceptionV3 expects reshaped
+                yield batch_x, batch_y
+        
+        # Create dataset from generator
+        dataset = tf.data.Dataset.from_generator(
+            generator_to_dataset,
+            output_signature=(
+                tf.TensorSpec(shape=(None, img_size, img_size, 3), dtype=tf.float32),
+                tf.TensorSpec(shape=(None, 1) if 'inception' in model_type.lower() else (None,), dtype=tf.float32)
+            )
+        )
+        
+        return dataset.prefetch(tf.data.AUTOTUNE)
+    
+    # ✅ FOR TRAINING: Use the corrected approach (augmentation before preprocessing)
     # Apply a DataFrame-level shuffle first
-    # This ensures proper class distribution before creating the dataset
     df_shuffled = df.sample(frac=1.0, random_state=42).reset_index(drop=True)
     
     # Debug: print class distribution
@@ -121,76 +168,65 @@ def _build_tfds(df, img_size, batch, is_train, preprocess_fn, model_type=""):
     # Debug: print first few labels to verify shuffle
     print(f"First 20 labels after shuffle: {labels[:20]}")
     
-    # Create tensor slices from PREPROCESSED numpy arrays to avoid issues
-    # This is crucial to prevent label corruption in the pipeline
+    # Create tensor slices
     ds_paths = tf.data.Dataset.from_tensor_slices(paths)
     ds_labels = tf.data.Dataset.from_tensor_slices(labels)
 
     def _load_raw(path, y):
-        """Load and resize image WITHOUT preprocessing - matching baseline order"""
+        """Load and resize image WITHOUT preprocessing - for training augmentation"""
         img_data = tf.io.read_file(path)
         img_data = tf.image.decode_png(img_data, channels=3)
-        img_data = tf.image.resize(img_data, IMG_SIZE[img_size])
-        # ✅ NO PREPROCESSING HERE - keep raw image data for augmentation
-        img_data = tf.cast(img_data, tf.float32)  # Just ensure float32 type
+        img_data = tf.image.resize(img_data, (img_size, img_size))
+        # Keep raw image data [0,255] for augmentation
+        img_data = tf.cast(img_data, tf.float32)
         
         # Convert labels to float32
         y_data = tf.cast(y, tf.float32)
         
         # For VGG16, provide labels as flat scalars
         if 'vgg16' in model_type.lower():
-            return img_data, tf.squeeze(y_data)  # Remove extra dimensions
+            return img_data, tf.squeeze(y_data)
         else:
             return img_data, tf.reshape(y_data, [1])
 
     def _apply_preprocessing(img, y):
-        """Apply preprocessing AFTER augmentation - matching baseline order"""
-        # ✅ PREPROCESSING HAPPENS AFTER AUGMENTATION
+        """Apply preprocessing AFTER augmentation"""
         processed_img = preprocess_fn(img)
         return processed_img, y
 
     # Create dataset zip
     ds = tf.data.Dataset.zip((ds_paths, ds_labels))
     
-    if is_train:
-        # Use a large buffer size for better shuffling
-        buffer_size = len(paths)  # Use full dataset size for perfect shuffling
-        ds = ds.shuffle(buffer_size, seed=42, reshuffle_each_iteration=True)
-        
-        # 1. Load raw images (no preprocessing yet)
-        ds = ds.map(_load_raw, num_parallel_calls=tf.data.AUTOTUNE)
-        
-        # 2. Apply augmentation to raw image data (0-255 range) - BASELINE ORDER
-        ds = ds.map(lambda x, y: (_AUG(x), y), num_parallel_calls=tf.data.AUTOTUNE)
-        
-        # 3. Apply preprocessing AFTER augmentation - BASELINE ORDER  
-        ds = ds.map(_apply_preprocessing, num_parallel_calls=tf.data.AUTOTUNE)
-        
-    else:
-        # For validation: load, then preprocess (no augmentation)
-        ds = ds.map(_load_raw, num_parallel_calls=tf.data.AUTOTUNE)
-        ds = ds.map(_apply_preprocessing, num_parallel_calls=tf.data.AUTOTUNE)
+    # Use a large buffer size for better shuffling
+    buffer_size = len(paths)
+    ds = ds.shuffle(buffer_size, seed=42, reshuffle_each_iteration=True)
+    
+    # 1. Load raw images (no preprocessing yet)
+    ds = ds.map(_load_raw, num_parallel_calls=tf.data.AUTOTUNE)
+    
+    # 2. Apply augmentation to raw image data (0-255 range)
+    ds = ds.map(lambda x, y: (_AUG(x), y), num_parallel_calls=tf.data.AUTOTUNE)
+    
+    # 3. Apply preprocessing AFTER augmentation
+    ds = ds.map(_apply_preprocessing, num_parallel_calls=tf.data.AUTOTUNE)
     
     # Create batches without further shuffling
     batched_ds = ds.batch(batch).prefetch(tf.data.AUTOTUNE)
     
     # Debug: check batch properties and content
-    if is_train:
-        print("\nChecking class distribution in first 5 batches:")
+    print("\nChecking class distribution in first 5 batches:")
+    for i, (_, batch_y) in enumerate(batched_ds.take(5)):
+        # Calculate malignant rate
+        batch_labels = batch_y.numpy().flatten()
+        rate = np.mean(batch_labels)
+        print(f"Batch {i+1}: {rate:.3f} malignant rate")
         
-        batch_data = []
-        for i, (_, batch_y) in enumerate(batched_ds.take(5)):
-            # Calculate malignant rate
-            batch_labels = batch_y.numpy().flatten()
-            rate = np.mean(batch_labels)
-            print(f"Batch {i+1}: {rate:.3f} malignant rate")
-            
-            # Show actual label values
-            if i < 2:  # For first two batches only
-                print(f"  Batch {i+1} labels: {batch_labels}")
-                # Count classes
-                unique, counts = np.unique(batch_labels, return_counts=True)
-                print(f"  Classes: {dict(zip(unique, counts))}")
+        # Show actual label values
+        if i < 2:  # For first two batches only
+            print(f"  Batch {i+1} labels: {batch_labels}")
+            # Count classes
+            unique, counts = np.unique(batch_labels, return_counts=True)
+            print(f"  Classes: {dict(zip(unique, counts))}")
     
     return batched_ds
 

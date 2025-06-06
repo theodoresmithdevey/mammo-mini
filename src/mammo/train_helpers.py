@@ -302,30 +302,31 @@ def train_once(cfg, outdir):
     # Fix early stopping callback
     cb = [
     tf.keras.callbacks.EarlyStopping(
-        monitor="val_AUC",  # Match metric name from model.compile
-        mode="max",
-        patience=6,
+        monitor="val_AUC",          # ✅ CHANGED: matches baseline (was "val_AUC" already, but ensuring consistency)
+        mode="max",                 # ✅ CHANGED: AUC should be maximized (was mode="max" already)
+        patience=6,                 # ✅ matches baseline patience
         restore_best_weights=True, 
         verbose=1
     ),
     
     tf.keras.callbacks.ModelCheckpoint(
         filepath=outdir / "best.weights.h5",
-        monitor="val_AUC",  # Match metric name from model.compile
-        mode="max",
+        monitor="val_AUC",          # ✅ CHANGED: matches early stopping metric (was "val_AUC" already)
+        mode="max",                 # ✅ CHANGED: AUC should be maximized (was mode="max" already)
         save_best_only=True,
         save_weights_only=True,
         verbose=0,
     ),
     
     tf.keras.callbacks.ReduceLROnPlateau(
-        monitor="val_loss", 
-        factor=0.5, 
-        patience=4,
-        min_lr=1e-6, 
+        monitor="val_AUC",          # ✅ CHANGED: from "val_loss" to "val_AUC" 
+        mode="max",                 # ✅ CHANGED: from monitoring loss (minimize) to AUC (maximize)
+        factor=0.5,                 # ✅ matches baseline
+        patience=4,                 # ✅ matches baseline  
+        min_lr=1e-6,                # ✅ matches baseline
         verbose=1
     ),
-    ]   
+]
 
     hist = model.fit(
         train_ds,

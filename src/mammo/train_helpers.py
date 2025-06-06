@@ -143,21 +143,23 @@ def _tta_predict(model, df_subset, cfg, tta_passes=10):
 
 def evaluate(model, val_ds, tta=False, tta_passes=10, cfg=None, df_subset=None):
     """
-    Updated evaluate function to support baseline-style TTA
+    Backward compatible evaluate function
     
     Args:
         model: Trained model
-        val_ds: Validation dataset (tf.data.Dataset) - used only when tta=False
+        val_ds: Validation dataset (tf.data.Dataset)
         tta: Whether to use test-time augmentation
         tta_passes: Number of TTA passes
-        cfg: Configuration dict (required for TTA)
-        df_subset: DataFrame subset for TTA (required for TTA)
+        cfg: Configuration dict (optional - if None and tta=True, will skip TTA)
+        df_subset: DataFrame subset for TTA (optional - if None and tta=True, will skip TTA)
     """
     import numpy as np
     import sklearn.metrics as skm
 
+    # ✅ BACKWARD COMPATIBILITY: If TTA is requested but parameters are missing, disable TTA
     if tta and (cfg is None or df_subset is None):
-        raise ValueError("For TTA=True, both 'cfg' and 'df_subset' parameters are required")
+        print("⚠️  Warning: TTA requested but cfg/df_subset not provided. Falling back to non-TTA evaluation.")
+        tta = False
 
     if tta:
         # Use baseline-style TTA approach

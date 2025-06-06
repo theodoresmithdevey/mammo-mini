@@ -25,12 +25,13 @@ ZIP_NAME    = "cbis-ddsm-breast-cancer-image-dataset.zip"
 IMG_SIZE = {224: (224, 224), 512: (512, 512)}
 
 # Updated to match baseline training augmentation exactly
+# Updated to match baseline training augmentation exactly with proper fill_mode
 _AUG = tf.keras.Sequential([
-    tf.keras.layers.RandomFlip("horizontal"),           # horizontal_flip=True
-    tf.keras.layers.RandomRotation(0.056),              # rotation_range=20 degrees (20/360 = 0.056)
-    tf.keras.layers.RandomTranslation(0.1, 0.1),        # width_shift_range=0.1, height_shift_range=0.1
-    tf.keras.layers.RandomShear(0.2),                   # shear_range=0.2
-    tf.keras.layers.RandomZoom(0.2),                    # zoom_range=0.2
+    tf.keras.layers.RandomFlip("horizontal"),                                    # horizontal_flip=True
+    tf.keras.layers.RandomRotation(20/360, fill_mode='nearest'),                 # rotation_range=20 degrees exactly, fill_mode='nearest'
+    tf.keras.layers.RandomTranslation(0.1, 0.1, fill_mode='nearest'),           # width_shift_range=0.1, height_shift_range=0.1, fill_mode='nearest'  
+    tf.keras.layers.RandomShear(0.2, fill_mode='nearest'),                       # shear_range=0.2, fill_mode='nearest'
+    tf.keras.layers.RandomZoom(0.2, fill_mode='nearest'),                        # zoom_range=0.2, fill_mode='nearest'
 ], name="baseline_training_augment")
 
 # --------------------------------------------------------------------- #
@@ -100,7 +101,7 @@ def _make_dataframe(root: pathlib.Path, view: str):
 # 3. tf.data builder                                                    #
 # --------------------------------------------------------------------- #
 def _build_tfds(df, img_size, batch, is_train, preprocess_fn, model_type=""):
-    """Build TensorFlow dataset with correct preprocessing and shuffling."""
+    """Build TensorFlow dataset with CORRECTED preprocessing order (augmentation before preprocessing)."""
     # Apply a DataFrame-level shuffle first
     # This ensures proper class distribution before creating the dataset
     df_shuffled = df.sample(frac=1.0, random_state=42).reset_index(drop=True)
@@ -125,14 +126,15 @@ def _build_tfds(df, img_size, batch, is_train, preprocess_fn, model_type=""):
     ds_paths = tf.data.Dataset.from_tensor_slices(paths)
     ds_labels = tf.data.Dataset.from_tensor_slices(labels)
 
-    def _load(path, y):
-        # Load and preprocess image
+    def _load_raw(path, y):
+        """Load and resize image WITHOUT preprocessing - matching baseline order"""
         img_data = tf.io.read_file(path)
         img_data = tf.image.decode_png(img_data, channels=3)
         img_data = tf.image.resize(img_data, IMG_SIZE[img_size])
-        img_data = preprocess_fn(img_data)
+        # ✅ NO PREPROCESSING HERE - keep raw image data for augmentation
+        img_data = tf.cast(img_data, tf.float32)  # Just ensure float32 type
         
-        # Convert to float32
+        # Convert labels to float32
         y_data = tf.cast(y, tf.float32)
         
         # For VGG16, provide labels as flat scalars
@@ -140,6 +142,12 @@ def _build_tfds(df, img_size, batch, is_train, preprocess_fn, model_type=""):
             return img_data, tf.squeeze(y_data)  # Remove extra dimensions
         else:
             return img_data, tf.reshape(y_data, [1])
+
+    def _apply_preprocessing(img, y):
+        """Apply preprocessing AFTER augmentation - matching baseline order"""
+        # ✅ PREPROCESSING HAPPENS AFTER AUGMENTATION
+        processed_img = preprocess_fn(img)
+        return processed_img, y
 
     # Create dataset zip
     ds = tf.data.Dataset.zip((ds_paths, ds_labels))
@@ -149,14 +157,19 @@ def _build_tfds(df, img_size, batch, is_train, preprocess_fn, model_type=""):
         buffer_size = len(paths)  # Use full dataset size for perfect shuffling
         ds = ds.shuffle(buffer_size, seed=42, reshuffle_each_iteration=True)
         
-        # Then do expensive mapping
-        ds = ds.map(_load, num_parallel_calls=tf.data.AUTOTUNE)
+        # 1. Load raw images (no preprocessing yet)
+        ds = ds.map(_load_raw, num_parallel_calls=tf.data.AUTOTUNE)
         
-        # Then augmentation
+        # 2. Apply augmentation to raw image data (0-255 range) - BASELINE ORDER
         ds = ds.map(lambda x, y: (_AUG(x), y), num_parallel_calls=tf.data.AUTOTUNE)
+        
+        # 3. Apply preprocessing AFTER augmentation - BASELINE ORDER  
+        ds = ds.map(_apply_preprocessing, num_parallel_calls=tf.data.AUTOTUNE)
+        
     else:
-        # For validation: just mapping, no shuffle
-        ds = ds.map(_load, num_parallel_calls=tf.data.AUTOTUNE)
+        # For validation: load, then preprocess (no augmentation)
+        ds = ds.map(_load_raw, num_parallel_calls=tf.data.AUTOTUNE)
+        ds = ds.map(_apply_preprocessing, num_parallel_calls=tf.data.AUTOTUNE)
     
     # Create batches without further shuffling
     batched_ds = ds.batch(batch).prefetch(tf.data.AUTOTUNE)

@@ -236,5 +236,36 @@ def get_loaders(cfg):
     
     return train_ds, val_ds
 
-# Export the aug npmentation layer
+# Add this function to the end of dataloaders.py (before the AUG_LAYER export)
+
+def get_dataframe_subset(cfg, split='val'):
+    """
+    Load dataframe subset for TTA evaluation.
+    
+    Args:
+        cfg: Configuration dictionary containing data paths and settings
+        split: Dataset split to return ('train', 'val', 'test')
+    
+    Returns:
+        DataFrame subset for the specified split
+    """
+    import pandas as pd
+    import pathlib
+    
+    csv_path = cfg.get('csv_path')
+    if csv_path and pathlib.Path(csv_path).exists():
+        df = pd.read_csv(csv_path)
+    else:
+        # Recreate dataframe if CSV cache doesn't exist
+        root = pathlib.Path(cfg['data_root'])
+        df = _make_dataframe(root, cfg['view'])
+        
+        # Cache the dataframe if csv_path is specified
+        if csv_path:
+            pathlib.Path(csv_path).parent.mkdir(parents=True, exist_ok=True)
+            df.to_csv(csv_path, index=False)
+    
+    return df[df['split'] == split].reset_index(drop=True)
+
+# Export the augmentation layer (existing line)
 AUG_LAYER = _AUG

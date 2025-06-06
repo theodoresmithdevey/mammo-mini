@@ -91,70 +91,126 @@ def build_model(cfg):
 #  Optional test-time augmentation (horizontal flip)                   #
 # ───────────────────────────────────────────────────────────────────── #
 
-def _tta_predict(model, batch_x, tta_passes=10):
-    """TTA with baseline-like fill behavior"""
-    preds = np.zeros((batch_x.shape[0], 1), dtype=np.float32)
+def _tta_predict(model, df_subset, cfg, tta_passes=10):
+    """TTA with exact baseline replication using ImageDataGenerator"""
+    from tensorflow.keras.preprocessing.image import ImageDataGenerator
+    from tensorflow.keras.applications.inception_v3 import preprocess_input as preprocess_inception
+    from tensorflow.keras.applications.vgg16 import preprocess_input as preprocess_vgg
+    import numpy as np
     
-    # Create baseline-compatible augmentation layer with fill_mode approximation
-    baseline_aug = tf.keras.Sequential([
-        tf.keras.layers.RandomFlip("horizontal"),
-        tf.keras.layers.RandomRotation(0.042, fill_mode='nearest'),        # Add fill_mode
-        tf.keras.layers.RandomZoom(0.1, fill_mode='nearest'),              # Add fill_mode
-    ], name="baseline_tta_augment")
+    # Choose preprocessing function based on model type (matching baseline)
+    model_type = cfg.get("model", "inceptionv3").lower()
+    if model_type == "vgg16":
+        preprocess_fn = preprocess_vgg
+    else:
+        preprocess_fn = preprocess_inception
     
-    for _ in range(tta_passes):
-        aug_batch = baseline_aug(batch_x, training=True)
-        preds += model(aug_batch, training=False).numpy()
+    # Create exact baseline TTA generator
+    tta_gen = ImageDataGenerator(
+        preprocessing_function=preprocess_fn,
+        rotation_range=15,          # Exact baseline: ±15 degrees
+        zoom_range=0.1,             # Exact baseline: ±10% zoom
+        horizontal_flip=True,       # Exact baseline: random horizontal flip
+        fill_mode='nearest'         # Exact baseline: fill mode
+    )
     
-    return preds / tta_passes
+    # Create dataframe copy with baseline-compatible label format
+    df_tta = df_subset.copy()
+    df_tta['label_str'] = df_tta['label'].map({0: 'benign', 1: 'malignant'})
+    
+    n = len(df_tta)
+    all_preds = np.zeros((n, tta_passes))
+    
+    # Exact baseline TTA loop: recreate data pipeline for each pass
+    for t in range(tta_passes):
+        print(f"TTA pass {t+1}/{tta_passes}")  # Match baseline logging
+        
+        tta_batch = tta_gen.flow_from_dataframe(
+            df_tta,
+            x_col='filepath',           # Column name in ablation dataframes
+            y_col='label_str',          # Binary string labels like baseline
+            target_size=(cfg.get('input_size', 512), cfg.get('input_size', 512)),
+            class_mode='binary',        # Exact baseline: binary classification
+            batch_size=cfg.get('batch_size', 16),
+            shuffle=False               # Exact baseline: no shuffling for consistent ordering
+        )
+        
+        preds = model.predict(tta_batch, verbose=0)  # Exact baseline: silent prediction
+        all_preds[:, t] = preds.flatten()           # Exact baseline: flatten and store
+    
+    return np.mean(all_preds, axis=1)  # Exact baseline: average across TTA passes
 
 
-def evaluate(model, val_ds, tta=False, tta_passes=10):
+def evaluate(model, val_ds, tta=False, tta_passes=10, cfg=None, df_subset=None):
+    """
+    Updated evaluate function to support baseline-style TTA
+    
+    Args:
+        model: Trained model
+        val_ds: Validation dataset (tf.data.Dataset) - used only when tta=False
+        tta: Whether to use test-time augmentation
+        tta_passes: Number of TTA passes
+        cfg: Configuration dict (required for TTA)
+        df_subset: DataFrame subset for TTA (required for TTA)
+    """
     import numpy as np
     import sklearn.metrics as skm
 
-    y_true, y_pred = [], []
-    
-    # Print validation dataset inspection
-    print("\nValidation dataset inspection:")
-    for batch_x, batch_y in val_ds.take(1):
-        print(f"Validation batch_x shape: {batch_x.shape}")
-        print(f"Validation batch_y shape: {batch_y.shape}")
-        print(f"Validation batch_y dtype: {batch_y.dtype}")
-        print(f"First few validation labels: {batch_y.numpy().flatten()[:10]}")
-    
-    for batch_x, batch_y in val_ds:
-        # Print the raw batch_y for debugging
-        if len(y_true) == 0:
-            print(f"Raw batch_y: {batch_y}")
-        
-        # Ensure batch_y is properly converted to a numpy array
-        batch_y_np = batch_y.numpy().flatten()
-        y_true.extend(batch_y_np)
+    if tta and (cfg is None or df_subset is None):
+        raise ValueError("For TTA=True, both 'cfg' and 'df_subset' parameters are required")
 
-        if tta:
-            batch_preds = _tta_predict(model, batch_x, tta_passes)
-        else:
+    if tta:
+        # Use baseline-style TTA approach
+        print(f"\nUsing baseline-style TTA with {tta_passes} passes")
+        y_pred = _tta_predict(model, df_subset, cfg, tta_passes)
+        y_true = df_subset['label'].values.astype(float)
+        
+        print(f"\nFinal evaluation arrays:")
+        print(f"y_true shape: {y_true.shape}, dtype: {y_true.dtype}")
+        print(f"y_pred shape: {y_pred.shape}, dtype: {y_pred.dtype}")
+        print(f"y_true unique values: {np.unique(y_true)}")
+        print(f"y_pred range: {np.min(y_pred):.4f} to {np.max(y_pred):.4f}")
+        
+    else:
+        # Original batch-by-batch approach for non-TTA
+        y_true, y_pred = [], []
+        
+        print("\nValidation dataset inspection:")
+        for batch_x, batch_y in val_ds.take(1):
+            print(f"Validation batch_x shape: {batch_x.shape}")
+            print(f"Validation batch_y shape: {batch_y.shape}")
+            print(f"Validation batch_y dtype: {batch_y.dtype}")
+            print(f"First few validation labels: {batch_y.numpy().flatten()[:10]}")
+        
+        for batch_x, batch_y in val_ds:
+            # Print the raw batch_y for debugging
+            if len(y_true) == 0:
+                print(f"Raw batch_y: {batch_y}")
+            
+            # Ensure batch_y is properly converted to a numpy array
+            batch_y_np = batch_y.numpy().flatten()
+            y_true.extend(batch_y_np)
+
             batch_preds = model.predict(batch_x, verbose=0)
 
-        # Flatten predictions properly
-        batch_preds_np = batch_preds.flatten()
-        y_pred.extend(batch_preds_np)
-        
-        # Early debugging - print first batch
-        if len(y_true) <= len(batch_y_np):
-            print(f"First batch true labels: {batch_y_np}")
-            print(f"First batch predictions: {batch_preds_np}")
+            # Flatten predictions properly
+            batch_preds_np = batch_preds.flatten()
+            y_pred.extend(batch_preds_np)
+            
+            # Early debugging - print first batch
+            if len(y_true) <= len(batch_y_np):
+                print(f"First batch true labels: {batch_y_np}")
+                print(f"First batch predictions: {batch_preds_np}")
 
-    y_true = np.array(y_true)
-    y_pred = np.array(y_pred)
-    
-    # Verify final arrays
-    print(f"\nFinal evaluation arrays:")
-    print(f"y_true shape: {y_true.shape}, dtype: {y_true.dtype}")
-    print(f"y_pred shape: {y_pred.shape}, dtype: {y_pred.dtype}")
-    print(f"y_true unique values: {np.unique(y_true)}")
-    print(f"y_pred range: {np.min(y_pred):.4f} to {np.max(y_pred):.4f}")
+        y_true = np.array(y_true)
+        y_pred = np.array(y_pred)
+        
+        # Verify final arrays
+        print(f"\nFinal evaluation arrays:")
+        print(f"y_true shape: {y_true.shape}, dtype: {y_true.dtype}")
+        print(f"y_pred shape: {y_pred.shape}, dtype: {y_pred.dtype}")
+        print(f"y_true unique values: {np.unique(y_true)}")
+        print(f"y_pred range: {np.min(y_pred):.4f} to {np.max(y_pred):.4f}")
 
     auc = skm.roc_auc_score(y_true, y_pred)
     acc = skm.accuracy_score(y_true, np.round(y_pred))  # threshold 0.5

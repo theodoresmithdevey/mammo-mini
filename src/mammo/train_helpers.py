@@ -51,9 +51,8 @@ def build_model(cfg):
                 if 'block4' in layer.name or 'block5' in layer.name:
                     layer.trainable = True
         elif arch == "inceptionv3":
-            for layer in base.layers:
-                if 'mixed9' in layer.name or 'mixed10' in layer.name:
-                    layer.trainable = True
+            for layer in base.layers[-44:]:
+                layer.trainable = True
     
     # For random weights: all layers trainable (no freezing)
     # This happens automatically since layers are trainable by default
@@ -62,7 +61,6 @@ def build_model(cfg):
     x = layers.GlobalAveragePooling2D()(base.output)
     x = layers.Dense(256, activation='relu', kernel_regularizer=regularizers.l2(0.001))(x)
     x = layers.Dropout(0.5)(x)
-    x = layers.BatchNormalization()(x)
     out = layers.Dense(1, activation='sigmoid')(x)
 
     model = models.Model(base.input, out)
@@ -260,21 +258,12 @@ def compile_model(model, cfg):
         opt = tf.keras.optimizers.SGD(learning_rate=lr, momentum=0.9, nesterov=True)
 
     # Use different loss strategies based on weights
-    if cfg["weights"] == "random":
-        model.compile(
-            optimizer=opt,
-            loss="binary_crossentropy",
-            metrics=["accuracy", tf.keras.metrics.AUC(name="AUC")]
-        )
-    else:
-        model.compile(
-            optimizer=opt,
-            loss=tf.keras.losses.BinaryFocalCrossentropy(
-                gamma=2.0,  # Focus more on hard examples
-                alpha=0.25  # Give more weight to positive (malignant) class
-            ),
-            metrics=["accuracy", tf.keras.metrics.AUC(name="AUC")]
-        )
+
+    model.compile(
+        optimizer=opt,
+        loss="binary_crossentropy",
+        metrics=["accuracy", tf.keras.metrics.AUC(name="AUC")]
+    )
     
     return model
 
@@ -304,8 +293,8 @@ def train_once(cfg, outdir):
     # Fix early stopping callback
     cb = [
     tf.keras.callbacks.EarlyStopping(
-        monitor="val_AUC",          # ✅ CHANGED: matches baseline (was "val_AUC" already, but ensuring consistency)
-        mode="max",                 # ✅ CHANGED: AUC should be maximized (was mode="max" already)
+        monitor="val_loss",           
+        mode="min",                
         patience=6,                 # ✅ matches baseline patience
         restore_best_weights=True, 
         verbose=1
@@ -313,16 +302,16 @@ def train_once(cfg, outdir):
     
     tf.keras.callbacks.ModelCheckpoint(
         filepath=outdir / "best.weights.h5",
-        monitor="val_AUC",          # ✅ CHANGED: matches early stopping metric (was "val_AUC" already)
-        mode="max",                 # ✅ CHANGED: AUC should be maximized (was mode="max" already)
+        monitor="val_loss",           
+        mode="min",       
         save_best_only=True,
         save_weights_only=True,
         verbose=0,
     ),
     
     tf.keras.callbacks.ReduceLROnPlateau(
-        monitor="val_AUC",          # ✅ CHANGED: from "val_loss" to "val_AUC" 
-        mode="max",                 # ✅ CHANGED: from monitoring loss (minimize) to AUC (maximize)
+        monitor="val_loss",           
+        mode="min",   
         factor=0.5,                 # ✅ matches baseline
         patience=4,                 # ✅ matches baseline  
         min_lr=1e-6,                # ✅ matches baseline

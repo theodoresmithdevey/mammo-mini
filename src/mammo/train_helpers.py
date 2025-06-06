@@ -1,6 +1,8 @@
 """
 Core training wrapper for mammo-mini.
 
+train_helpers.py
+
 Supports ONLY:
   • model  : 'vgg16' | 'inceptionv3'
   • weights: 'imagenet' | 'random'
@@ -76,25 +78,11 @@ def build_model(cfg):
     else:
         opt = optimizers.SGD(learning_rate=lr, momentum=0.9)
 
-    # Use different loss strategies
-    if cfg["weights"] == "random":
-        # For random weights: use standard binary crossentropy
-        # Training from scratch works better with standard loss
-        model.compile(
-            optimizer=opt,
-            loss="binary_crossentropy",
-            metrics=["accuracy", tf.keras.metrics.AUC(name="AUC")]
-        )
-    else:
-        # For ImageNet pretrained: use focal loss for class balance
-        model.compile(
-            optimizer=opt,
-            loss=tf.keras.losses.BinaryFocalCrossentropy(
-                gamma=2.0,
-                alpha=0.25
-            ),
-            metrics=["accuracy", tf.keras.metrics.AUC(name="AUC")]
-        )
+    model.compile(
+        optimizer=opt,
+        loss="binary_crossentropy",
+        metrics=["accuracy", tf.keras.metrics.AUC(name="AUC")]
+    )
     
     return model
 

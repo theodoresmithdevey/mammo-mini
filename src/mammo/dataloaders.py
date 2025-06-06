@@ -316,5 +316,204 @@ def get_dataframe_subset(cfg, split='val'):
     
     return df[df['split'] == split].reset_index(drop=True)
 
+# ============================================================================
+# COMPLETE BASELINE IMAGEDATAGENERATOR REPLACEMENT
+# Replace your entire dataloaders.py get_loaders function with this
+# ============================================================================
+
+def get_loaders_baseline_style(cfg):
+    """
+    EXACT baseline ImageDataGenerator approach
+    This completely replaces the tf.data pipeline with baseline approach
+    """
+    import pandas as pd
+    import pathlib
+    from tensorflow.keras.preprocessing.image import ImageDataGenerator
+    from tensorflow.keras.applications.inception_v3 import preprocess_input as preprocess_inception
+    from tensorflow.keras.applications.vgg16 import preprocess_input as preprocess_vgg
+    
+    if cfg['dataset'].lower() != 'cbis_ddsm':
+        raise ValueError("Only cbis_ddsm supported for now.")
+
+    root = pathlib.Path(cfg['data_root'])
+    _download_and_unzip(root)  # Your existing function
+
+    # Load or create dataframe (your existing logic)
+    csv_path = cfg.get('csv_path')
+    if csv_path and pathlib.Path(csv_path).exists():
+        df = pd.read_csv(csv_path)
+    else:
+        df = _make_dataframe(root, cfg['view'])  # Your existing function
+        if csv_path:
+            pathlib.Path(csv_path).parent.mkdir(parents=True, exist_ok=True)
+            df.to_csv(csv_path, index=False)
+
+    # ✅ EXACT BASELINE SETUP
+    img_size = cfg.get('input_size', 512)
+    batch_size = cfg.get('batch_size', 8)
+    model_type = cfg["model"].lower()
+
+    # Choose preprocessing function (baseline approach)
+    if model_type == "vgg16":
+        print("Using VGG16 preprocessing")
+        preprocess_fn = preprocess_vgg
+    elif model_type == "inceptionv3":
+        print("Using InceptionV3 preprocessing")
+        preprocess_fn = preprocess_inception
+    else:
+        raise ValueError("Unknown model architecture")
+
+    # Prepare dataframes with baseline-compatible format
+    train_df = df[df['split'] == 'train'].copy()
+    val_df = df[df['split'] == 'val'].copy()
+    
+    # ✅ CRITICAL: Add label_str column exactly like baseline
+    train_df['label_str'] = train_df['label'].map({0: 'benign', 1: 'malignant'})
+    val_df['label_str'] = val_df['label'].map({0: 'benign', 1: 'malignant'})
+    
+    # ✅ EXACT BASELINE IMAGE DATA GENERATORS
+    
+    # Training generator with augmentation (EXACT baseline parameters)
+    train_gen = ImageDataGenerator(
+        preprocessing_function=preprocess_fn,  # ✅ Applied here like baseline
+        rotation_range=20,                     # ✅ Exact baseline
+        width_shift_range=0.1,                 # ✅ Exact baseline  
+        height_shift_range=0.1,                # ✅ Exact baseline
+        shear_range=0.2,                       # ✅ Exact baseline
+        zoom_range=0.2,                        # ✅ Exact baseline
+        horizontal_flip=True,                  # ✅ Exact baseline
+        fill_mode='nearest'                    # ✅ Exact baseline
+    )
+    
+    # Validation generator with NO augmentation (EXACT baseline)
+    val_test_gen = ImageDataGenerator(preprocessing_function=preprocess_fn)
+    
+    # ✅ EXACT BASELINE FLOW_FROM_DATAFRAME CALLS
+    
+    print(f"Train set: {len(train_df)} samples")
+    print(f"Val set: {len(val_df)} samples")
+    
+    # Training data generator
+    train_generator = train_gen.flow_from_dataframe(
+        train_df,
+        x_col='filepath',                      # ✅ Your column name
+        y_col='label_str',                     # ✅ Baseline format
+        target_size=(img_size, img_size),      # ✅ Baseline format
+        batch_size=batch_size,                 # ✅ Baseline batch size
+        class_mode='binary'                    # ✅ Exact baseline
+    )
+    
+    # Validation data generator  
+    val_generator = val_test_gen.flow_from_dataframe(
+        val_df,
+        x_col='filepath',                      # ✅ Your column name  
+        y_col='label_str',                     # ✅ Baseline format
+        target_size=(img_size, img_size),      # ✅ Baseline format
+        batch_size=batch_size,                 # ✅ Baseline batch size
+        class_mode='binary'                    # ✅ Exact baseline
+    )
+    
+    print(f"✅ Created baseline-style generators:")
+    print(f"   Training: {train_generator.samples} samples, {len(train_generator)} batches")
+    print(f"   Validation: {val_generator.samples} samples, {len(val_generator)} batches")
+    
+    return train_generator, val_generator
+
+# ============================================================================
+# UPDATE YOUR TRAIN_HELPERS.PY
+# ============================================================================
+
+def train_once_baseline_style(cfg, outdir):
+    """
+    Updated train_once to work with baseline ImageDataGenerator approach
+    """
+    outdir = pathlib.Path(outdir)
+    set_seed(cfg["seed"])
+
+    # ✅ Use baseline data loading
+    print(f"\n{'='*40}\nLoading data for {cfg['model']} model (BASELINE STYLE)\n{'='*40}")
+    train_generator, val_generator = get_loaders_baseline_style(cfg)
+
+    # Build model (your existing function)
+    print(f"\n{'='*40}\nBuilding {cfg['model']} model\n{'='*40}")
+    model = build_model(cfg)  
+
+    # ✅ EXACT BASELINE CALLBACKS (val_loss monitoring)
+    cb = [
+        tf.keras.callbacks.EarlyStopping(
+            monitor="val_loss",        # ✅ Baseline monitors val_loss
+            mode="min",                # ✅ Minimize loss
+            patience=6,
+            restore_best_weights=True, 
+            verbose=1
+        ),
+        
+        tf.keras.callbacks.ModelCheckpoint(
+            filepath=outdir / "best.weights.h5",
+            monitor="val_loss",        # ✅ Baseline monitors val_loss
+            mode="min",                # ✅ Minimize loss
+            save_best_only=True,
+            save_weights_only=True,
+            verbose=0,
+        ),
+        
+        tf.keras.callbacks.ReduceLROnPlateau(
+            monitor="val_loss",        # ✅ Baseline monitors val_loss
+            mode="min",                # ✅ Minimize loss
+            factor=0.5, 
+            patience=4,
+            min_lr=1e-6, 
+            verbose=1
+        ),
+    ]   
+
+    # ✅ EXACT BASELINE TRAINING CALL
+    hist = model.fit(
+        train_generator,                       # ✅ Use generator directly
+        validation_data=val_generator,         # ✅ Use generator directly  
+        epochs=cfg.get("epochs", 15),
+        verbose=2,
+        callbacks=cb,
+    )
+
+    # ✅ BASELINE-STYLE EVALUATION (simplified)
+    # For now, just get basic metrics from training history
+    final_val_auc = max(hist.history.get('val_AUC', [0]))
+    final_val_acc = hist.history.get('val_accuracy', [0])[-1]
+    
+    metrics = {
+        'val_auc': float(final_val_auc),
+        'val_acc': float(final_val_acc),
+        'history': {k: [float(v) for v in hist.history[k]] for k in hist.history}
+    }
+
+    # Save artifacts
+    outdir.mkdir(parents=True, exist_ok=True)
+    save_json(cfg, outdir/"config.json")
+    save_json(metrics, outdir/"metrics.json")
+    model.save(outdir / "model.keras")
+
+    return metrics
+
+# ============================================================================
+# USAGE INSTRUCTIONS
+# ============================================================================
+
+"""
+1. Add get_loaders_baseline_style() to your dataloaders.py
+
+2. Replace your train_once function call in the ablation sweep with:
+   metrics_train = train_once_baseline_style(cfg, outdir)
+
+3. For comprehensive evaluation, you can still use the baseline TTA approach:
+   - The generators can be used with your existing TTA functions
+   - Just make sure to create test_generator the same way
+
+4. Expected outcome:
+   - Epoch 1 val_AUC should jump from ~0.77 to ~0.82 (matching baseline)
+   - Training dynamics should match baseline exactly
+   - LR reduction should happen around epoch 14 (not epoch 6)
+"""
+
 # Export the augmentation layer (existing line)
 AUG_LAYER = _AUG
